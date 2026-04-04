@@ -6,7 +6,9 @@
   "license": "AGPL-3.0",
   "scripts": {
     "dev": "pnpm --filter @opendialer/server dev & pnpm --filter @opendialer/web dev",
-    "build": "pnpm -r build",
+    "build": "pnpm --filter @opendialer/web build && pnpm --filter @opendialer/server build",
+    "start": "node packages/server/dist/index.js",
+    "test": "pnpm -r test",
     "lint": "pnpm -r lint"
   },
   "engines": {

@@ -38,11 +38,16 @@ pnpm install                              # Install all dependencies
 pnpm dev                                  # Run backend (:3000) + frontend (:5173) concurrently
 pnpm --filter @opendialer/server dev      # Backend only
 pnpm --filter @opendialer/web dev         # Frontend only
-pnpm build                                # Full production build
+pnpm build                                # Build frontend then backend (web first so server can serve it)
+pnpm start                                # Production: single server on :3000 serves API + frontend
 pnpm -r db:generate                       # Generate Drizzle migrations after schema changes
-docker compose up --build                 # Docker deployment (frontend at :8080, backend at :3000)
+docker compose up --build                 # Docker deployment — single container on :3000
 docker compose --profile tunnel up --build # With Cloudflare Tunnel for webhooks
 ```
+
+## Single-Port Architecture
+
+In production, Fastify serves both the API and the React frontend from one port (`:3000`). The server detects if `packages/web/dist` exists and serves it via `@fastify/static` with SPA fallback. In dev, Vite's dev server (`:5173`) proxies API calls to Fastify (`:3000`).
 
 ## Code Style
 

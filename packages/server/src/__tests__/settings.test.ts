@@ -1,0 +1,55 @@
+import { describe, it, expect, beforeAll, afterAll } from 'vitest';
+import { buildApp } from '../app.js';
+import type { FastifyInstance } from 'fastify';
+
+let app: FastifyInstance;
+
+beforeAll(async () => {
+  app = await buildApp();
+  await app.ready();
+});
+
+afterAll(async () => {
+  await app.close();
+});
+
+describe('Settings API', () => {
+  it('GET /api/settings returns empty object initially', async () => {
+    const res = await app.inject({ method: 'GET', url: '/api/settings' });
+    expect(res.statusCode).toBe(200);
+    expect(typeof res.json()).toBe('object');
+  });
+
+  it('PUT /api/settings upserts key-value pairs', async () => {
+    const res = await app.inject({
+      method: 'PUT',
+      url: '/api/settings',
+      payload: { TELNYX_API_KEY: 'test-key-123', SOME_SETTING: 'value' },
+    });
+    expect(res.statusCode).toBe(200);
+    expect(res.json().success).toBe(true);
+  });
+
+  it('GET /api/settings returns saved settings', async () => {
+    const res = await app.inject({ method: 'GET', url: '/api/settings' });
+    const body = res.json();
+    expect(body.TELNYX_API_KEY).toBe('test-key-123');
+    expect(body.SOME_SETTING).toBe('value');
+  });
+
+  it('PUT /api/settings overwrites existing keys', async () => {
+    await app.inject({
+      method: 'PUT',
+      url: '/api/settings',
+      payload: { TELNYX_API_KEY: 'updated-key' },
+    });
+    const res = await app.inject({ method: 'GET', url: '/api/settings' });
+    expect(res.json().TELNYX_API_KEY).toBe('updated-key');
+  });
+
+  it('GET /api/settings/health returns configured status', async () => {
+    const res = await app.inject({ method: 'GET', url: '/api/settings/health' });
+    expect(res.statusCode).toBe(200);
+    expect(res.json().status).toBe('configured');
+  });
+});

@@ -1,37 +1,25 @@
 services:
-  server:
-    build:
-      context: ./packages/server
-      dockerfile: Dockerfile
-    expose:
-      - "3000"
-    ports:
-      - "3000:3000"       # Local access — remove if only using tunnel
-    volumes:
-      - db-data:/app/data
-      - uploads:/app/uploads
-    env_file: .env
-    restart: unless-stopped
-
-  web:
+  app:
     build:
       context: .
-      dockerfile: packages/web/Dockerfile
+      dockerfile: Dockerfile
     ports:
-      - "8080:80"
-    depends_on:
-      - server
+      - "3000:3000"
+    volumes:
+      - db-data:/app/packages/server/data
+      - uploads:/app/packages/server/uploads
+    env_file: .env
     restart: unless-stopped
 
   # Cloudflare Tunnel — exposes the app publicly with HTTPS
   # Option A: Quick anonymous tunnel (URL changes each restart, no account needed)
-  #   Uncomment below, run `docker compose up`, check logs for URL:
-  #   docker compose logs tunnel
+  #   Run: docker compose --profile tunnel up
+  #   Check logs for URL: docker compose logs tunnel
   tunnel:
     image: cloudflare/cloudflared:latest
-    command: tunnel --no-autoupdate --url http://web:80
+    command: tunnel --no-autoupdate --url http://app:3000
     depends_on:
-      - web
+      - app
     restart: unless-stopped
     profiles:
       - tunnel
@@ -39,18 +27,18 @@ services:
   # Option B: Persistent named tunnel (stable custom domain)
   #   1. Create free Cloudflare account + add a domain
   #   2. Zero Trust dashboard → Tunnels → Create tunnel
-  #   3. Set hostname: app.yourdomain.com → http://web:80
+  #   3. Set hostname: app.yourdomain.com → http://app:3000
   #   4. Copy token to .env as CLOUDFLARE_TUNNEL_TOKEN=eyJ...
   #   5. Run: docker compose --profile tunnel-named up
   tunnel-named:
     image: cloudflare/cloudflared:latest
     command: tunnel --no-autoupdate run --token ${CLOUDFLARE_TUNNEL_TOKEN}
     depends_on:
-      - web
+      - app
     restart: unless-stopped
     profiles:
       - tunnel-named
 
 volumes:
-  db-data:      # Persistent SQLite database (works on Windows + Linux)
+  db-data:      # Persistent SQLite database
   uploads:      # Persistent uploaded recordings
