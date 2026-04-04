@@ -59,7 +59,14 @@ export const contactRoutes: FastifyPluginAsync = async (fastify) => {
   // Update contact
   fastify.put<{
     Params: { id: string };
-    Body: Partial<{ name: string; phone: string; company: string; email: string; notes: string; status: string }>;
+    Body: Partial<{
+      name: string;
+      phone: string;
+      company: string;
+      email: string;
+      notes: string;
+      status: 'pending' | 'voicemail' | 'connected' | 'no_answer' | 'callback' | 'not_interested' | 'dnc';
+    }>;
   }>('/:id', async (request, reply) => {
     const id = Number(request.params.id);
     const result = await db

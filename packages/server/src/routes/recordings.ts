@@ -11,7 +11,7 @@ const uploadsDir = resolve('uploads');
 
 export const recordingRoutes: FastifyPluginAsync = async (fastify) => {
   // List recordings
-  fastify.get<{ Querystring: { type?: string } }>('/', async (request) => {
+  fastify.get<{ Querystring: { type?: 'opener' | 'voicemail' } }>('/', async (request) => {
     const { type } = request.query;
     if (type) {
       return db.select().from(recordings).where(eq(recordings.type, type));

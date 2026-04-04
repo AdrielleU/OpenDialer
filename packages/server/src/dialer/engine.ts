@@ -58,7 +58,7 @@ export const dialerEngine = {
     await this.dialNext();
   },
 
-  async dialNext() {
+  async dialNext(): Promise<void> {
     const session = getSession();
     if (session.status !== 'running') return;
     if (session.queue.length === 0) {
@@ -270,7 +270,7 @@ export const dialerEngine = {
       .update(callLogs)
       .set({
         endedAt: new Date().toISOString(),
-        disposition,
+        disposition: disposition as 'voicemail' | 'connected' | 'no_answer' | 'busy' | 'failed',
       })
       .where(eq(callLogs.telnyxCallControlId, callControlId));
 

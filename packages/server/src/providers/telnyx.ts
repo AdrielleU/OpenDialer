@@ -2,14 +2,14 @@ import Telnyx from 'telnyx';
 import type { TelephonyProvider, DialParams, DialResult } from './types.js';
 
 export class TelnyxProvider implements TelephonyProvider {
-  private client: ReturnType<typeof Telnyx>;
+  private client: any;
 
   constructor(apiKey: string) {
-    this.client = Telnyx(apiKey);
+    this.client = new (Telnyx as any)(apiKey);
   }
 
   async dial(params: DialParams): Promise<DialResult> {
-    const response = await this.client.calls.create({
+    const response = await this.client.calls.dial({
       connection_id: params.connectionId,
       to: params.to,
       from: params.from,
@@ -27,11 +27,11 @@ export class TelnyxProvider implements TelephonyProvider {
   }
 
   async hangup(callControlId: string): Promise<void> {
-    await this.client.calls.hangup(callControlId);
+    await this.client.calls.actions.hangup(callControlId);
   }
 
   async playAudio(callControlId: string, audioUrl: string, clientState?: string): Promise<void> {
-    await this.client.calls.playbackStart(callControlId, {
+    await this.client.calls.actions.startPlayback(callControlId, {
       audio_url: audioUrl,
       client_state: clientState
         ? Buffer.from(clientState).toString('base64')
@@ -40,19 +40,19 @@ export class TelnyxProvider implements TelephonyProvider {
   }
 
   async bridge(callControlId: string, targetCallControlId: string): Promise<void> {
-    await this.client.calls.bridge(callControlId, {
+    await this.client.calls.actions.bridge(callControlId, {
       call_control_id: targetCallControlId,
     });
   }
 
   async startRecording(callControlId: string): Promise<void> {
-    await this.client.calls.recordStart(callControlId, {
+    await this.client.calls.actions.startRecording(callControlId, {
       format: 'mp3',
       channels: 'dual',
     });
   }
 
   async stopRecording(callControlId: string): Promise<void> {
-    await this.client.calls.recordStop(callControlId);
+    await this.client.calls.actions.stopRecording(callControlId);
   }
 }

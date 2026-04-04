@@ -51,7 +51,7 @@ export const campaignRoutes: FastifyPluginAsync = async (fastify) => {
       callerId: string;
       openerRecordingId: number;
       voicemailRecordingId: number;
-      status: string;
+      status: 'draft' | 'active' | 'paused' | 'completed';
     }>;
   }>('/:id', async (request, reply) => {
     const id = Number(request.params.id);
