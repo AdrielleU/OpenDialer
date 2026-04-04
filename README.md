@@ -29,14 +29,18 @@
 
 OpenDialer is a **browser-based power dialer** you self-host on your own infrastructure. Plug in your [Telnyx](https://telnyx.com) API keys, upload contacts, upload voicemail recordings, and start dialing — all from the browser with a headset.
 
-**This is NOT an AI voice agent.** This is a classic power dialer with:
+**This is NOT an AI voice agent.** This is a classic power dialer built for teams:
 
+- 👥 **Multi-user team dialing** — multiple operators share a campaign queue, system dials in parallel
+- 🔀 **Parallel dialing** — dials 3x the number of available operators simultaneously
+- 🎯 **Auto-routing** — human-answered calls auto-route to the first available operator (FIFO fairness)
 - 🤖 **Answering Machine Detection (AMD)** — automatically detects voicemail vs. human
-- 📬 **Pre-recorded voicemail drops** — drops your message after the beep, no user action needed
-- 🎙️ **Pre-recorded opener playback** — plays your intro when a human answers
-- 🎧 **Live human takeover (Jump In)** — take over the call from your browser via WebRTC
+- 📬 **Pre-recorded voicemail drops** — drops your message after the beep, no operator action needed
+- 🎙️ **Per-operator recording profiles** — each team member has their own opener & voicemail recordings
+- 🎧 **Auto-bridge via WebRTC** — operators are connected into live calls automatically
 - ⏭️ **Auto-advance through contact lists** — voicemails are fully automatic
-- 📊 **Analytics & CSV export** — export contacts, call logs, and campaign stats
+- 🔐 **Auth with MFA** — multi-user login, forced password change + TOTP on first login, admin/operator roles
+- 📊 **Analytics & CSV export** — per-campaign and per-operator stats
 
 ### 💰 Why?
 
@@ -65,29 +69,47 @@ Create calling campaigns with contact lists, opener recordings, and voicemail dr
 ### 🎵 Recording Management
 Upload MP3/WAV files for opener messages and voicemail drops. Preview recordings in-browser. A/B test different messages across campaigns.
 
-### 📞 Power Dialer
-The main screen — sit with your headset on:
-- **Voicemails are automatic** — AMD detects, waits for beep, drops recording, hangs up, dials next
-- **Humans get your attention** — opener plays, you see "Human Answered", click Jump In to take over
-- **Auto-advance** — the dialer moves through your list automatically
-- **Pause/Resume/Stop** — full session control
+### 📞 Power Dialer (Team Mode)
+The main screen — your team sits with headsets on:
+- **Parallel dialing** — system dials 3x the number of available operators simultaneously
+- **Voicemails are automatic** — AMD detects, waits for beep, drops recording, hangs up, dials more
+- **Auto-routing** — when a human answers, the call is automatically routed to the first available operator
+- **Auto-bridge** — operator's WebRTC audio is bridged into the live call automatically (no manual "Jump In" needed in team mode)
+- **Waiting queue** — if all operators are busy, human-answered calls hold until someone is free
+- **Wrap-up flow** — after a call ends, operator enters wrap-up (notes/disposition), then sets available for the next call
+- **Pause/Resume/Stop** — admin controls the session; operators join/leave individually
+
+### 👤 Team Management
+- **Roles** — admin (manage team, campaigns, start/stop sessions) and operator (join sessions, take calls)
+- **Admin Team page** — invite operators by email, assign roles, reset passwords, remove members
+- **First-login wizard** — new operators must change their temporary password and set up MFA before using the app
+
+### 🎙️ Recording Profiles
+- **Per-operator profiles** — each team member creates named profiles (e.g., "Cold Outreach", "Follow Up")
+- **Opener + voicemail combo** — each profile pairs an opener recording with a voicemail drop
+- **Activate before dialing** — switch profiles depending on the campaign or call type
+- Campaign recordings serve as the default; operator profiles override when bridged
 
 ### 📊 Analytics & Export
 - Campaign stats: total calls, connects, voicemails, talk time, connect rate
+- Per-operator breakdown: calls handled, connects, avg talk time
 - Contact progress: visual breakdown by status
 - Call disposition: breakdown with percentages
 - **CSV export**: contacts, call logs, campaign summaries — import into any CRM or spreadsheet
 
-### Call Transcription (Coming Soon)
+### Call Transcription
 Two paths for transcribing calls — see [docs/transcription.md](docs/transcription.md) for full details:
 - **Telnyx Built-in** — real-time transcription via Telnyx's API ($0.025/min), zero infrastructure, 4 engine choices (Telnyx, Google, Deepgram, Azure)
 - **Bring Your Own STT** — stream raw call audio via WebSocket to any provider (Deepgram, OpenAI Whisper, AssemblyAI, etc.)
 
 ### Authentication & Security
-- **Password + MFA** — first-time setup creates an admin password and TOTP two-factor authentication
-- **Authenticator app support** — Google Authenticator, Authy, 1Password, or any TOTP-compatible app
+- **Multi-user auth** — email + password login with bcrypt hashing, admin and operator roles
+- **Forced MFA** — TOTP two-factor authentication required on first login (Google Authenticator, Authy, 1Password, etc.)
+- **First-login setup** — temporary password from admin → forced change + MFA setup on first login
+- **WorkOS SSO** — optional Google, GitHub, or SAML login via WorkOS
 - **Session-based** — 24-hour session cookie, sign out anytime from the sidebar
 - **Webhook verification** — Telnyx Ed25519 signature verification on incoming webhooks (optional, enable via `TELNYX_PUBLIC_KEY`)
+- **Legacy mode** — single-password login from `.env` still works for solo self-hosters
 
 ### ⚙️ Settings
 - Enter your Telnyx API key, Connection ID, and phone number
@@ -207,10 +229,12 @@ TELNYX_CONNECTION_ID=your_connection_id
 TELNYX_PHONE_NUMBER=+1your_number
 WEBHOOK_BASE_URL=https://your-public-url
 
+# Admin account (created on first startup — must change password on first login)
+DEFAULT_ADMIN_PASSWORD=changeme
+DEFAULT_ADMIN_EMAIL=admin@yourcompany.com
+
 # Database — local SQLite (default) or external libSQL
 DATABASE_URL=./data/opendialer.db
-# DATABASE_URL=libsql://your-db.example.com
-# DATABASE_AUTH_TOKEN=your-token-here
 ```
 
 ### 2. Run with Docker Desktop
@@ -297,14 +321,15 @@ Once OpenDialer is running, follow these steps to make your first calls.
 
 ### Step 0: Create Your Admin Account
 
-On first launch, you'll see the setup screen:
+On first launch, OpenDialer creates a default admin from your `DEFAULT_ADMIN_PASSWORD` env var:
 
-1. **Create a password** (minimum 8 characters)
-2. **Scan the QR code** with your authenticator app (Google Authenticator, Authy, 1Password, etc.)
-3. **Enter the 6-digit code** from your app to verify
-4. You're logged in! This is the only account — OpenDialer is single-admin by design
+1. **Login** with your email and the default password
+2. **Change your password** (forced on first login)
+3. **Set up MFA** — scan the QR code with your authenticator app (Google Authenticator, Authy, 1Password)
+4. **Enter the 6-digit code** to verify
+5. You're in! Go to the **Team** page to invite operators
 
-On future visits, you'll sign in with your password + authenticator code.
+On future visits, sign in with your email + password + authenticator code.
 
 ### Step 1: Configure Telnyx Credentials
 
@@ -339,25 +364,36 @@ On future visits, you'll sign in with your password + authenticator code.
    - **Bulk import via CSV** — upload a CSV with columns: `name`, `phone`, `company`, `email`, `notes`. Phone numbers must be in E.164 format (`+1XXXXXXXXXX`)
 3. Contacts start with status **Pending** and move through the dialer queue
 
-### Step 5: Start Dialing
+### Step 5: Start Dialing (Team Mode)
 
-1. Go to the **Dialer** page — this is your main workspace
-2. **Put on your headset** — your browser will use WebRTC for audio
-3. Select your campaign from the dropdown and click **Start Calling**
-4. The dialer auto-advances through your contact list:
+**Admin:**
+1. Go to the **Dialer** page, select a campaign, click **Start Calling**
+2. The system begins dialing contacts from the queue
+
+**Operators:**
+1. Go to the **Dialer** page and click **Join Session**
+2. **Put on your headset** — your browser connects via WebRTC
+3. The system dials 3x the number of available operators simultaneously
+4. Sit back — calls are routed to you automatically:
 
 | What you see | What's happening | What to do |
 |-------------|------------------|------------|
-| **Dialing...** | Call is being placed | Wait |
-| **Detecting...** | AMD is analyzing the pickup | Wait |
-| **Dropping Voicemail** | Machine detected, waiting for beep → auto-drops voicemail → auto-hangs up → auto-dials next | Nothing — fully automatic |
-| **Human Answered!** | A live person picked up, opener is playing | Get ready, then click **Jump In** |
-| **You are LIVE** | Your mic is bridged into the call | Talk! |
-| **AMD inconclusive** | Detection couldn't determine human vs. machine | Click **Jump In** to be safe, or **Skip** |
-| **AMD timed out** | Detection took too long (>35s) | Click **Jump In** or **Skip** |
+| **Available** | You're in the queue, system is dialing | Wait for a human |
+| **Voicemail (auto)** | Machine detected → auto-drops voicemail → auto-dials more | Nothing — fully automatic |
+| **Call Routed!** | A human answered and you've been selected | You're auto-bridged — talk! |
+| **You are LIVE** | Your mic is connected to the contact | Have the conversation |
+| **Wrap-up** | Call ended, enter notes/disposition | Click **Done** to go back to available |
+| **Waiting for Operator** | Human on the line but all operators busy | Finish your call, the waiting call routes next |
 
-5. Use **Pause** to stop auto-advancing (current call continues), **Resume** to restart, **Stop** to end the session
-6. Use **Skip** to hang up the current call and move to the next contact
+5. **Admin** can **Pause/Resume/Stop** the session. Operators can **Leave** individually
+6. After each call, you enter **wrap-up** to log notes, then click **Set Available** for the next one
+
+### Solo Mode (Single Operator)
+
+If only one operator is in the session, it behaves like a traditional power dialer:
+- One call at a time, sequential auto-advance
+- Manual **Jump In** button when a human answers
+- Same voicemail automation
 
 ### Step 6: Review Results
 
@@ -394,7 +430,7 @@ On future visits, you'll sign in with your password + authenticator code.
 │  │  (The Brain)               │  │
 │  └────────────────────────────┘  │
 │  ┌────────────────────────────┐  │
-│  │  Dialer Engine             │  │  ← Manages call queue + auto-advance
+│  │  Parallel Dialing Engine   │  │  ← Team queue, multi-line, auto-route
 │  └────────────────────────────┘  │
 │  ┌────────────────────────────┐  │
 │  │  Provider Abstraction      │  │  ← Telnyx now, Twilio later
@@ -419,7 +455,8 @@ On future visits, you'll sign in with your password + authenticator code.
 |-------|-----------|-----|
 | Frontend | React 19 + TypeScript + Tailwind CSS 4 | Modern, fast, great DX |
 | Backend | Fastify 5 + TypeScript | Fastest Node.js framework, great TS support |
-| Database | SQLite or remote libSQL via Drizzle ORM | Local file or external DB — set via env var |
+| Database | SQLite or remote libSQL via Drizzle ORM (8 tables) | Local file or external DB — set via env var |
+| Auth | bcrypt + TOTP (otplib) + optional WorkOS SSO | Multi-user with roles, forced MFA |
 | Telephony | Telnyx Call Control API | Best price/performance for voice, excellent AMD |
 | Browser Audio | @telnyx/webrtc SDK | WebRTC softphone in the browser |
 | Real-time | Server-Sent Events (SSE) | Simpler than WebSocket, auto-reconnect, HTTP-native |
@@ -439,40 +476,47 @@ opendialer/
 │   │   │   ├── index.ts         # Server entrypoint
 │   │   │   ├── config.ts        # Zod-validated env config
 │   │   │   ├── db/
-│   │   │   │   ├── schema.ts    # Drizzle ORM tables (6 tables)
+│   │   │   │   ├── schema.ts    # Drizzle ORM tables (8 tables)
 │   │   │   │   ├── index.ts     # Database connection (local SQLite or remote libSQL)
-│   │   │   │   └── migrate.ts   # Auto-migration on startup
+│   │   │   │   ├── migrate.ts   # Auto-migration on startup
+│   │   │   │   └── seed.ts      # Auto-create admin from DEFAULT_ADMIN_PASSWORD
 │   │   │   ├── routes/
+│   │   │   │   ├── auth.ts      # Login, MFA, password change, WorkOS SSO
+│   │   │   │   ├── users.ts     # User CRUD (admin only)
 │   │   │   │   ├── campaigns.ts # Campaign CRUD
 │   │   │   │   ├── contacts.ts  # Contact CRUD + bulk import
 │   │   │   │   ├── recordings.ts# File upload + management
+│   │   │   │   ├── recording-profiles.ts # Per-user recording profiles
 │   │   │   │   ├── transcripts.ts# Transcript history per call/campaign
 │   │   │   │   ├── settings.ts  # Key-value settings store
-│   │   │   │   ├── dialer.ts    # Start/pause/resume/stop/skip/jump-in
+│   │   │   │   ├── dialer.ts    # Start/stop/join/leave/available/wrap-up/jump-in
 │   │   │   │   └── analytics.ts # Stats + CSV export endpoints
 │   │   │   ├── webhooks/
-│   │   │   │   └── telnyx.ts    # ← THE BRAIN: call state machine
+│   │   │   │   └── telnyx.ts    # ← THE BRAIN: per-call state machine + auto-routing
 │   │   │   ├── dialer/
-│   │   │   │   ├── engine.ts    # Call queue, auto-advance logic
-│   │   │   │   ├── state.ts     # In-memory session state
-│   │   │   │   └── bridge.ts    # WebRTC bridge (Jump In)
+│   │   │   │   ├── engine.ts    # Parallel dialing, batch dial, call routing
+│   │   │   │   ├── team-state.ts# TeamSession: operators, in-flight calls, waiting queue
+│   │   │   │   ├── state.ts     # Legacy single-user session (backward compat)
+│   │   │   │   └── bridge.ts    # Per-operator WebRTC bridge
 │   │   │   ├── providers/
 │   │   │   │   ├── types.ts     # TelephonyProvider interface
 │   │   │   │   ├── telnyx.ts    # Telnyx implementation
 │   │   │   │   └── twilio.ts    # Twilio stub (future)
 │   │   │   └── ws/
-│   │   │       └── index.ts     # SSE broadcast to frontend
+│   │   │       └── index.ts     # SSE per-user targeted broadcasting
 │   │   └── drizzle/             # Generated SQL migrations
 │   │
 │   └── web/                     # React frontend
 │       ├── src/
 │       │   ├── App.tsx          # Router + layout
 │       │   ├── pages/
+│       │   │   ├── Login.tsx    # Email+password login, first-login wizard
 │       │   │   ├── Dialer.tsx   # Main softphone UI (3-panel)
 │       │   │   ├── Campaigns.tsx# Campaign builder
 │       │   │   ├── Contacts.tsx # Contact list + CSV upload
 │       │   │   ├── Recordings.tsx# Upload + playback
 │       │   │   ├── Transcription.tsx # Transcription config + history viewer
+│       │   │   ├── Team.tsx     # Admin user management (invite, roles, reset pw)
 │       │   │   ├── Analytics.tsx# Stats dashboard + CSV export
 │       │   │   └── Settings.tsx # API key configuration
 │       │   ├── hooks/
@@ -485,39 +529,73 @@ opendialer/
 
 ### Database Schema
 
-6 tables, all managed by Drizzle ORM with auto-migration:
+8 tables, all managed by Drizzle ORM with auto-migration:
 
 | Table | Purpose | Key Fields |
 |-------|---------|------------|
 | `settings` | Key-value config store | API keys, webhook URL, provider |
+| `users` | Team members | email, name, passwordHash, mfaSecret, role, mustChangePassword |
 | `campaigns` | Calling campaigns | name, caller ID, recording IDs, transcription config, status |
 | `contacts` | Contact lists per campaign | name, phone (E.164), company, status |
-| `recordings` | Uploaded audio files | name, type (opener/voicemail), file path |
-| `call_logs` | Call history | disposition, duration, timestamps, recording URL |
+| `recordings` | Uploaded audio files | name, type (opener/voicemail), file path, userId |
+| `recording_profiles` | Per-user recording combos | userId, opener + voicemail IDs, isDefault |
+| `call_logs` | Call history | operatorId, disposition, talkTimeSeconds, duration |
 | `transcripts` | Call transcription lines | call log ID, speaker, content, confidence |
 
 ### API Endpoints
 
 | Method | Endpoint | Description |
 |--------|----------|-------------|
+| | **Auth** | |
+| `GET` | `/api/auth/status` | Auth status (mode, user, logged in) |
+| `POST` | `/api/auth/login` | Login with email + password |
+| `POST` | `/api/auth/login/mfa` | MFA verification step |
+| `POST` | `/api/auth/change-password` | Change password (first-login or voluntary) |
+| `GET` | `/api/auth/mfa-setup` | Get MFA QR code |
+| `POST` | `/api/auth/verify-mfa` | Verify MFA setup code |
+| `GET` | `/api/auth/workos` | Redirect to WorkOS SSO |
+| | **Users (admin)** | |
+| `GET` | `/api/users` | List all users |
+| `POST` | `/api/users` | Create user |
+| `PUT` | `/api/users/:id` | Update user |
+| `DELETE` | `/api/users/:id` | Delete user |
+| `POST` | `/api/users/:id/reset-password` | Reset user password |
+| `GET` | `/api/users/me` | Current user profile |
+| | **Campaigns** | |
 | `GET` | `/api/campaigns` | List campaigns with contact counts |
 | `POST` | `/api/campaigns` | Create campaign |
+| | **Contacts** | |
 | `GET` | `/api/contacts?campaignId=X` | List contacts |
 | `POST` | `/api/contacts/bulk` | Bulk import contacts (JSON) |
+| | **Recordings & Profiles** | |
 | `POST` | `/api/recordings` | Upload audio file (multipart) |
-| `GET` | `/api/settings` | Get all settings |
-| `PUT` | `/api/settings` | Save settings |
-| `POST` | `/api/dialer/start` | Start dialing session |
+| `GET` | `/api/recording-profiles` | List user's recording profiles |
+| `POST` | `/api/recording-profiles` | Create profile |
+| `PUT` | `/api/recording-profiles/:id/activate` | Set profile as active |
+| | **Dialer** | |
+| `POST` | `/api/dialer/start` | Start dialing session (admin) |
+| `POST` | `/api/dialer/stop` | Stop session (admin) |
 | `POST` | `/api/dialer/pause` | Pause auto-advance |
-| `POST` | `/api/dialer/jump-in` | Bridge into live call |
+| `POST` | `/api/dialer/resume` | Resume auto-advance |
+| `POST` | `/api/dialer/join` | Operator joins session |
+| `POST` | `/api/dialer/leave` | Operator leaves session |
+| `POST` | `/api/dialer/register-webrtc` | Register operator's WebRTC leg |
+| `POST` | `/api/dialer/set-available` | Operator ready for next call |
+| `POST` | `/api/dialer/set-wrap-up` | Operator in wrap-up mode |
+| `POST` | `/api/dialer/jump-in` | Manual bridge into call |
+| `POST` | `/api/dialer/skip` | Skip/hangup a call |
+| `GET` | `/api/dialer/status` | Team session status (operators, in-flight calls) |
+| | **Analytics & Export** | |
 | `GET` | `/api/analytics/campaigns/:id/stats` | Campaign statistics |
 | `GET` | `/api/analytics/campaigns/:id/export/contacts` | Export contacts CSV |
 | `GET` | `/api/analytics/campaigns/:id/export/calls` | Export call logs CSV |
 | `GET` | `/api/analytics/export/summary` | Export all campaigns CSV |
+| | **Transcripts** | |
 | `GET` | `/api/transcripts?callLogId=X` | Get transcripts for a call |
 | `GET` | `/api/transcripts/campaign/:id` | Get all transcripts for a campaign |
-| `POST` | `/webhooks/telnyx` | Telnyx webhook receiver |
-| `GET` | `/events` | SSE stream (real-time updates) |
+| | **System** | |
+| `POST` | `/webhooks/telnyx` | Telnyx webhook receiver (signature verified) |
+| `GET` | `/events` | SSE stream (per-user targeted) |
 
 ---
 
@@ -596,7 +674,12 @@ CSV exports include all fields and are compatible with Excel, Google Sheets, Hub
 - [x] Analytics dashboard + CSV export
 - [x] Docker Compose + Cloudflare Tunnel deployment
 - [x] Local SQLite or external libSQL database support
-- [x] Admin authentication with password + TOTP MFA
+- [x] Multi-user team dialing with parallel lines (3x operators)
+- [x] Auto-routing and auto-bridge for human-answered calls
+- [x] Users, roles (admin/operator), team management
+- [x] Per-operator recording profiles
+- [x] First-login wizard (forced password change + MFA)
+- [x] Multi-user auth with bcrypt + TOTP MFA + optional WorkOS SSO
 - [x] Telnyx webhook Ed25519 signature verification
 - [x] AMD error handling (`not_sure`, timeout fallback)
 - [x] [Call transcription — Telnyx built-in](docs/transcription.md) (real-time, 4 engines, per-campaign config)
