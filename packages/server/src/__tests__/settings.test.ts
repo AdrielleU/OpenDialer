@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { buildApp } from '../app.js';
+import { authCookie } from './setup.js';
 import type { FastifyInstance } from 'fastify';
 
 let app: FastifyInstance;
@@ -15,7 +16,11 @@ afterAll(async () => {
 
 describe('Settings API', () => {
   it('GET /api/settings returns empty object initially', async () => {
-    const res = await app.inject({ method: 'GET', url: '/api/settings' });
+    const res = await app.inject({
+      method: 'GET',
+      url: '/api/settings',
+      headers: { cookie: authCookie() },
+    });
     expect(res.statusCode).toBe(200);
     expect(typeof res.json()).toBe('object');
   });
@@ -24,6 +29,7 @@ describe('Settings API', () => {
     const res = await app.inject({
       method: 'PUT',
       url: '/api/settings',
+      headers: { cookie: authCookie() },
       payload: { TELNYX_API_KEY: 'test-key-123', SOME_SETTING: 'value' },
     });
     expect(res.statusCode).toBe(200);
@@ -31,7 +37,11 @@ describe('Settings API', () => {
   });
 
   it('GET /api/settings returns saved settings', async () => {
-    const res = await app.inject({ method: 'GET', url: '/api/settings' });
+    const res = await app.inject({
+      method: 'GET',
+      url: '/api/settings',
+      headers: { cookie: authCookie() },
+    });
     const body = res.json();
     expect(body.TELNYX_API_KEY).toBe('test-key-123');
     expect(body.SOME_SETTING).toBe('value');
@@ -41,14 +51,23 @@ describe('Settings API', () => {
     await app.inject({
       method: 'PUT',
       url: '/api/settings',
+      headers: { cookie: authCookie() },
       payload: { TELNYX_API_KEY: 'updated-key' },
     });
-    const res = await app.inject({ method: 'GET', url: '/api/settings' });
+    const res = await app.inject({
+      method: 'GET',
+      url: '/api/settings',
+      headers: { cookie: authCookie() },
+    });
     expect(res.json().TELNYX_API_KEY).toBe('updated-key');
   });
 
   it('GET /api/settings/health returns configured status', async () => {
-    const res = await app.inject({ method: 'GET', url: '/api/settings/health' });
+    const res = await app.inject({
+      method: 'GET',
+      url: '/api/settings/health',
+      headers: { cookie: authCookie() },
+    });
     expect(res.statusCode).toBe(200);
     expect(res.json().status).toBe('configured');
   });

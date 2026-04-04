@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { buildApp } from '../app.js';
+import { authCookie } from './setup.js';
 import type { FastifyInstance } from 'fastify';
 
 let app: FastifyInstance;
@@ -20,6 +21,7 @@ describe('Campaigns API', () => {
     const res = await app.inject({
       method: 'POST',
       url: '/api/campaigns',
+      headers: { cookie: authCookie() },
       payload: { name: 'Test Campaign', callerId: '+15551234567' },
     });
     expect(res.statusCode).toBe(201);
@@ -32,7 +34,11 @@ describe('Campaigns API', () => {
   });
 
   it('GET /api/campaigns lists campaigns', async () => {
-    const res = await app.inject({ method: 'GET', url: '/api/campaigns' });
+    const res = await app.inject({
+      method: 'GET',
+      url: '/api/campaigns',
+      headers: { cookie: authCookie() },
+    });
     expect(res.statusCode).toBe(200);
     const body = res.json();
     expect(Array.isArray(body)).toBe(true);
@@ -40,13 +46,21 @@ describe('Campaigns API', () => {
   });
 
   it('GET /api/campaigns/:id returns a single campaign', async () => {
-    const res = await app.inject({ method: 'GET', url: `/api/campaigns/${campaignId}` });
+    const res = await app.inject({
+      method: 'GET',
+      url: `/api/campaigns/${campaignId}`,
+      headers: { cookie: authCookie() },
+    });
     expect(res.statusCode).toBe(200);
     expect(res.json().name).toBe('Test Campaign');
   });
 
   it('GET /api/campaigns/:id returns 404 for missing campaign', async () => {
-    const res = await app.inject({ method: 'GET', url: '/api/campaigns/99999' });
+    const res = await app.inject({
+      method: 'GET',
+      url: '/api/campaigns/99999',
+      headers: { cookie: authCookie() },
+    });
     expect(res.statusCode).toBe(404);
   });
 
@@ -54,6 +68,7 @@ describe('Campaigns API', () => {
     const res = await app.inject({
       method: 'PUT',
       url: `/api/campaigns/${campaignId}`,
+      headers: { cookie: authCookie() },
       payload: { name: 'Updated Campaign' },
     });
     expect(res.statusCode).toBe(200);
@@ -61,13 +76,21 @@ describe('Campaigns API', () => {
   });
 
   it('DELETE /api/campaigns/:id deletes a campaign', async () => {
-    const res = await app.inject({ method: 'DELETE', url: `/api/campaigns/${campaignId}` });
+    const res = await app.inject({
+      method: 'DELETE',
+      url: `/api/campaigns/${campaignId}`,
+      headers: { cookie: authCookie() },
+    });
     expect(res.statusCode).toBe(200);
     expect(res.json().success).toBe(true);
   });
 
   it('DELETE /api/campaigns/:id returns 404 for missing campaign', async () => {
-    const res = await app.inject({ method: 'DELETE', url: `/api/campaigns/${campaignId}` });
+    const res = await app.inject({
+      method: 'DELETE',
+      url: `/api/campaigns/${campaignId}`,
+      headers: { cookie: authCookie() },
+    });
     expect(res.statusCode).toBe(404);
   });
 });

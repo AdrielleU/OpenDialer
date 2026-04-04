@@ -43,6 +43,25 @@ async function request<T>(path: string, options?: RequestInit): Promise<T> {
   return res.json();
 }
 
+// Auth
+export const auth = {
+  status: () =>
+    request<{ hasPassword: boolean; hasMfa: boolean; hasWorkos: boolean; loggedIn: boolean }>(
+      '/auth/status',
+    ),
+  login: (password: string) =>
+    request<{ requireMfa: boolean; message?: string }>('/auth/login', {
+      method: 'POST',
+      body: JSON.stringify({ password }),
+    }),
+  loginMfa: (password: string, code: string) =>
+    request<{ message: string }>('/auth/login/mfa', {
+      method: 'POST',
+      body: JSON.stringify({ password, code }),
+    }),
+  logout: () => request('/auth/logout', { method: 'POST' }),
+};
+
 // Campaigns
 export const api = {
   campaigns: {

@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { buildApp } from '../app.js';
+import { authCookie } from './setup.js';
 import type { FastifyInstance } from 'fastify';
 
 let app: FastifyInstance;
@@ -13,6 +14,7 @@ beforeAll(async () => {
   const res = await app.inject({
     method: 'POST',
     url: '/api/campaigns',
+    headers: { cookie: authCookie() },
     payload: { name: 'Contact Test Campaign', callerId: '+15559999999' },
   });
   campaignId = res.json().id;
@@ -29,6 +31,7 @@ describe('Contacts API', () => {
     const res = await app.inject({
       method: 'POST',
       url: '/api/contacts',
+      headers: { cookie: authCookie() },
       payload: {
         campaignId,
         name: 'John Doe',
@@ -49,6 +52,7 @@ describe('Contacts API', () => {
     const res = await app.inject({
       method: 'POST',
       url: '/api/contacts/bulk',
+      headers: { cookie: authCookie() },
       payload: {
         campaignId,
         contacts: [
@@ -65,13 +69,18 @@ describe('Contacts API', () => {
     const res = await app.inject({
       method: 'POST',
       url: '/api/contacts/bulk',
+      headers: { cookie: authCookie() },
       payload: { campaignId, contacts: [] },
     });
     expect(res.statusCode).toBe(400);
   });
 
   it('GET /api/contacts lists all contacts', async () => {
-    const res = await app.inject({ method: 'GET', url: '/api/contacts' });
+    const res = await app.inject({
+      method: 'GET',
+      url: '/api/contacts',
+      headers: { cookie: authCookie() },
+    });
     expect(res.statusCode).toBe(200);
     expect(res.json().length).toBeGreaterThanOrEqual(3);
   });
@@ -80,6 +89,7 @@ describe('Contacts API', () => {
     const res = await app.inject({
       method: 'GET',
       url: `/api/contacts?campaignId=${campaignId}`,
+      headers: { cookie: authCookie() },
     });
     expect(res.statusCode).toBe(200);
     const body = res.json();
@@ -88,7 +98,11 @@ describe('Contacts API', () => {
   });
 
   it('GET /api/contacts/:id returns a single contact', async () => {
-    const res = await app.inject({ method: 'GET', url: `/api/contacts/${contactId}` });
+    const res = await app.inject({
+      method: 'GET',
+      url: `/api/contacts/${contactId}`,
+      headers: { cookie: authCookie() },
+    });
     expect(res.statusCode).toBe(200);
     expect(res.json().name).toBe('John Doe');
   });
@@ -97,6 +111,7 @@ describe('Contacts API', () => {
     const res = await app.inject({
       method: 'PUT',
       url: `/api/contacts/${contactId}`,
+      headers: { cookie: authCookie() },
       payload: { name: 'John Updated' },
     });
     expect(res.statusCode).toBe(200);
@@ -104,13 +119,21 @@ describe('Contacts API', () => {
   });
 
   it('DELETE /api/contacts/:id deletes a contact', async () => {
-    const res = await app.inject({ method: 'DELETE', url: `/api/contacts/${contactId}` });
+    const res = await app.inject({
+      method: 'DELETE',
+      url: `/api/contacts/${contactId}`,
+      headers: { cookie: authCookie() },
+    });
     expect(res.statusCode).toBe(200);
     expect(res.json().success).toBe(true);
   });
 
   it('DELETE /api/contacts/:id returns 404 for missing contact', async () => {
-    const res = await app.inject({ method: 'DELETE', url: `/api/contacts/${contactId}` });
+    const res = await app.inject({
+      method: 'DELETE',
+      url: `/api/contacts/${contactId}`,
+      headers: { cookie: authCookie() },
+    });
     expect(res.statusCode).toBe(404);
   });
 });

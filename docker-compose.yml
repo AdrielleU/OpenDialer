@@ -4,11 +4,14 @@ services:
       context: .
       dockerfile: Dockerfile
     ports:
-      - "3000:3000"
+      - "${PORT:-3000}:3000"
     volumes:
       - db-data:/app/packages/server/data
       - uploads:/app/packages/server/uploads
     env_file: .env
+    environment:
+      - DATABASE_URL=${DATABASE_URL:-./data/opendialer.db}
+      - DATABASE_AUTH_TOKEN=${DATABASE_AUTH_TOKEN:-}
     restart: unless-stopped
 
   # Cloudflare Tunnel — exposes the app publicly with HTTPS
@@ -40,5 +43,5 @@ services:
       - tunnel-named
 
 volumes:
-  db-data:      # Persistent SQLite database
+  db-data:      # Persistent SQLite database (unused with external DB)
   uploads:      # Persistent uploaded recordings

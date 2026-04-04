@@ -1,5 +1,6 @@
 import { NavLink, Outlet } from 'react-router-dom';
-import { Phone, Users, FileAudio, Settings, LayoutList, BarChart3, MessageSquareText } from 'lucide-react';
+import { Phone, Users, FileAudio, Settings, LayoutList, BarChart3, MessageSquareText, LogOut } from 'lucide-react';
+import { auth } from '../lib/api';
 
 const navItems = [
   { to: '/', label: 'Dialer', icon: Phone },
@@ -11,7 +12,16 @@ const navItems = [
   { to: '/settings', label: 'Settings', icon: Settings },
 ];
 
-export default function Layout() {
+interface Props {
+  onLogout: () => void;
+}
+
+export default function Layout({ onLogout }: Props) {
+  const handleLogout = async () => {
+    await auth.logout();
+    onLogout();
+  };
+
   return (
     <div className="flex h-screen bg-gray-950 text-gray-100">
       {/* Sidebar */}
@@ -41,7 +51,16 @@ export default function Layout() {
             </NavLink>
           ))}
         </div>
-        <div className="p-4 border-t border-gray-800 text-xs text-gray-600">
+        <div className="p-2 border-t border-gray-800">
+          <button
+            onClick={handleLogout}
+            className="flex items-center gap-3 px-3 py-2 rounded-lg text-sm text-gray-400 hover:bg-gray-800 hover:text-gray-200 transition-colors w-full"
+          >
+            <LogOut size={18} />
+            Sign Out
+          </button>
+        </div>
+        <div className="px-4 py-3 text-xs text-gray-600">
           OpenDialer v0.1.0
         </div>
       </nav>

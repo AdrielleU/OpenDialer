@@ -83,6 +83,12 @@ Two paths for transcribing calls — see [docs/transcription.md](docs/transcript
 - **Telnyx Built-in** — real-time transcription via Telnyx's API ($0.025/min), zero infrastructure, 4 engine choices (Telnyx, Google, Deepgram, Azure)
 - **Bring Your Own STT** — stream raw call audio via WebSocket to any provider (Deepgram, OpenAI Whisper, AssemblyAI, etc.)
 
+### Authentication & Security
+- **Password + MFA** — first-time setup creates an admin password and TOTP two-factor authentication
+- **Authenticator app support** — Google Authenticator, Authy, 1Password, or any TOTP-compatible app
+- **Session-based** — 24-hour session cookie, sign out anytime from the sidebar
+- **Webhook verification** — Telnyx Ed25519 signature verification on incoming webhooks (optional, enable via `TELNYX_PUBLIC_KEY`)
+
 ### ⚙️ Settings
 - Enter your Telnyx API key, Connection ID, and phone number
 - Test connectivity from the UI
@@ -127,9 +133,12 @@ User clicks "Start Calling" → System dials Contact #1
 | 2 | Someone/something picks up | `call.answered` | AMD starts analyzing |
 | 3a | AMD says "machine" | `call.machine.detection.ended` (result=machine) | Wait for the beep |
 | 3b | AMD says "human" | `call.machine.detection.ended` (result=human) | Play opener recording, alert user |
+| 3c | AMD unsure | `call.machine.detection.ended` (result=not_sure) | Treat as human with warning, play opener |
+| 3d | AMD times out (>35s) | *(no event — server timeout)* | Treat as human with warning |
 | 4 | Voicemail beep detected | `call.machine.greeting.ended` | Play voicemail drop recording |
 | 5 | Recording finishes playing | `call.playback.ended` | If voicemail → hang up → dial next. If opener → wait for user |
 | 6 | User clicks "Jump In" | REST API call | Bridge user's WebRTC audio into the live call |
+| 6b | Transcription (if enabled) | `call.transcription` | Store transcript line, broadcast to UI |
 | 7 | Call ends (any reason) | `call.hangup` | Log result, update contact status, dial next |
 
 ### Key Mechanism: `client_state`
@@ -171,34 +180,80 @@ No polling. No WebSocket complexity. The browser uses the native `EventSource` A
   - A [SIP Connection](https://portal.telnyx.com/#/app/connections) with WebRTC enabled
   - A purchased phone number
 
-### 1. Clone & Configure
+### 1. Download & Configure
 
+**Option A — Git clone (recommended):**
 ```bash
 git clone https://github.com/yourusername/OpenDialer.git
 cd OpenDialer
-cp .env.example .env
 ```
 
-Edit `.env` with your Telnyx credentials:
+**Option B — Download ZIP (no Git required):**
+1. Go to the [GitHub repo](https://github.com/yourusername/OpenDialer)
+2. Click the green **Code** button → **Download ZIP**
+3. Extract the ZIP to a folder (e.g., `C:\Users\you\OpenDialer` on Windows or `~/OpenDialer` on Mac)
+
+**Configure your `.env` file:**
+
+1. Find the file `.env.example` in the project folder
+2. Copy it and rename the copy to `.env`
+   - **Windows:** Right-click → Copy → Paste → Rename to `.env`
+   - **Mac/Linux:** `cp .env.example .env`
+3. Open `.env` in any text editor (Notepad, VS Code, TextEdit) and fill in your Telnyx credentials:
 
 ```env
 TELNYX_API_KEY=KEY_your_key_here
 TELNYX_CONNECTION_ID=your_connection_id
 TELNYX_PHONE_NUMBER=+1your_number
 WEBHOOK_BASE_URL=https://your-public-url
+
+# Database — local SQLite (default) or external libSQL
+DATABASE_URL=./data/opendialer.db
+# DATABASE_URL=libsql://your-db.example.com
+# DATABASE_AUTH_TOKEN=your-token-here
 ```
 
-### 2. Run
+### 2. Run with Docker Desktop
+
+Make sure **Docker Desktop is running** (you should see the whale icon in your taskbar/menu bar).
+
+Open a terminal in the project folder and run:
 
 ```bash
 docker compose up --build
 ```
 
-That's it. Open [http://localhost:8080](http://localhost:8080).
+> **Windows tip:** In File Explorer, navigate to the OpenDialer folder, click the address bar, type `cmd`, and press Enter. This opens a terminal in the right directory.
+>
+> **Mac tip:** Right-click the folder in Finder → **Services** → **New Terminal at Folder**.
 
-### 3. Public URL for Webhooks
+The first build takes a few minutes. When you see output like:
+```
+opendialer-app-1  | Server listening on port 3000
+```
 
-Telnyx needs to reach your server. For local development, use [Cloudflare Tunnel](https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/) (free, no account needed):
+You're ready. Open **http://localhost:3000** in your browser.
+
+### 3. Managing with Docker Desktop (after first run)
+
+Once the containers are running, you can manage everything from the **Docker Desktop dashboard**:
+
+```
+Docker Desktop → Containers
+  [▼] opendialer                    Running    [■ Stop] [↻ Restart]
+      ├── opendialer-app-1          Running    3000:3000  🔗
+      └── opendialer-tunnel-1       Running               (if tunnel enabled)
+```
+
+- **Start/Stop** — Click the Stop or Play button on the stack. No terminal needed after first run
+- **Open the app** — Click the **port link** (`3000:3000`) next to the app container — it opens `http://localhost:3000` in your browser
+- **View logs** — Click any container name to see live logs in the Logs tab
+- **Terminal access** — Click a container → Terminal tab to open a shell inside the container
+- **Restart after .env changes** — Stop the stack, then Start it again from the dashboard
+
+### 4. Public URL for Webhooks
+
+Telnyx needs to reach your server to send call events. For local development, use [Cloudflare Tunnel](https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/) (free, no account needed):
 
 ```bash
 # Quick tunnel — random URL, good for testing
@@ -217,6 +272,8 @@ cloudflared tunnel --url http://localhost:3000
 Set the URL as your `WEBHOOK_BASE_URL` in the Settings page.
 
 ### Development Mode (without Docker)
+
+For contributors or developers who want to work on the code:
 
 ```bash
 # Install pnpm if needed
@@ -237,6 +294,17 @@ pnpm dev
 ## 📖 User Guide — Your First Calling Session
 
 Once OpenDialer is running, follow these steps to make your first calls.
+
+### Step 0: Create Your Admin Account
+
+On first launch, you'll see the setup screen:
+
+1. **Create a password** (minimum 8 characters)
+2. **Scan the QR code** with your authenticator app (Google Authenticator, Authy, 1Password, etc.)
+3. **Enter the 6-digit code** from your app to verify
+4. You're logged in! This is the only account — OpenDialer is single-admin by design
+
+On future visits, you'll sign in with your password + authenticator code.
 
 ### Step 1: Configure Telnyx Credentials
 
@@ -301,7 +369,9 @@ Once OpenDialer is running, follow these steps to make your first calls.
 - **Outbound calls** are placed via Telnyx's REST Call Control API — your server controls the call
 - **Your audio** (when you Jump In) goes through WebRTC in your browser via the `@telnyx/webrtc` SDK
 - **Bridging** connects the two call legs together so you and the contact can hear each other
-- **State is in-memory** — if the server restarts during a session, active calls are orphaned. The contact list and logs are persisted in SQLite
+- **Transcription** — if enabled on the campaign, real-time transcription auto-starts when you bridge in. Transcripts are stored per call and viewable on the Transcription page
+- **AMD error handling** — `not_sure` results are treated as human with a warning; a 35s timeout catches cases where AMD detection never fires
+- **State is in-memory** — if the server restarts during a session, active calls are orphaned. The contact list, logs, and transcripts are persisted in the database
 
 ---
 
@@ -333,7 +403,7 @@ Once OpenDialer is running, follow these steps to make your first calls.
 │  │  Analytics + CSV Export    │  │  ← Stats, reports, data export
 │  └────────────────────────────┘  │
 │                                  │
-│  SQLite (Drizzle ORM)            │  ← Zero-config, file-based
+│  SQLite / libSQL (Drizzle ORM)   │  ← Local file or external DB
 └──────────────┬──────────────────┘
                │
 ┌──────────────┴──────────────────┐
@@ -349,7 +419,7 @@ Once OpenDialer is running, follow these steps to make your first calls.
 |-------|-----------|-----|
 | Frontend | React 19 + TypeScript + Tailwind CSS 4 | Modern, fast, great DX |
 | Backend | Fastify 5 + TypeScript | Fastest Node.js framework, great TS support |
-| Database | SQLite via Drizzle ORM + libsql | Zero config, file-based, type-safe queries |
+| Database | SQLite or remote libSQL via Drizzle ORM | Local file or external DB — set via env var |
 | Telephony | Telnyx Call Control API | Best price/performance for voice, excellent AMD |
 | Browser Audio | @telnyx/webrtc SDK | WebRTC softphone in the browser |
 | Real-time | Server-Sent Events (SSE) | Simpler than WebSocket, auto-reconnect, HTTP-native |
@@ -369,13 +439,14 @@ opendialer/
 │   │   │   ├── index.ts         # Server entrypoint
 │   │   │   ├── config.ts        # Zod-validated env config
 │   │   │   ├── db/
-│   │   │   │   ├── schema.ts    # Drizzle ORM tables (5 tables)
-│   │   │   │   ├── index.ts     # Database connection
+│   │   │   │   ├── schema.ts    # Drizzle ORM tables (6 tables)
+│   │   │   │   ├── index.ts     # Database connection (local SQLite or remote libSQL)
 │   │   │   │   └── migrate.ts   # Auto-migration on startup
 │   │   │   ├── routes/
 │   │   │   │   ├── campaigns.ts # Campaign CRUD
 │   │   │   │   ├── contacts.ts  # Contact CRUD + bulk import
 │   │   │   │   ├── recordings.ts# File upload + management
+│   │   │   │   ├── transcripts.ts# Transcript history per call/campaign
 │   │   │   │   ├── settings.ts  # Key-value settings store
 │   │   │   │   ├── dialer.ts    # Start/pause/resume/stop/skip/jump-in
 │   │   │   │   └── analytics.ts # Stats + CSV export endpoints
@@ -401,6 +472,7 @@ opendialer/
 │       │   │   ├── Campaigns.tsx# Campaign builder
 │       │   │   ├── Contacts.tsx # Contact list + CSV upload
 │       │   │   ├── Recordings.tsx# Upload + playback
+│       │   │   ├── Transcription.tsx # Transcription config + history viewer
 │       │   │   ├── Analytics.tsx# Stats dashboard + CSV export
 │       │   │   └── Settings.tsx # API key configuration
 │       │   ├── hooks/
@@ -413,15 +485,16 @@ opendialer/
 
 ### Database Schema
 
-5 tables, all managed by Drizzle ORM with auto-migration:
+6 tables, all managed by Drizzle ORM with auto-migration:
 
 | Table | Purpose | Key Fields |
 |-------|---------|------------|
 | `settings` | Key-value config store | API keys, webhook URL, provider |
-| `campaigns` | Calling campaigns | name, caller ID, recording IDs, status |
+| `campaigns` | Calling campaigns | name, caller ID, recording IDs, transcription config, status |
 | `contacts` | Contact lists per campaign | name, phone (E.164), company, status |
 | `recordings` | Uploaded audio files | name, type (opener/voicemail), file path |
 | `call_logs` | Call history | disposition, duration, timestamps, recording URL |
+| `transcripts` | Call transcription lines | call log ID, speaker, content, confidence |
 
 ### API Endpoints
 
@@ -441,6 +514,8 @@ opendialer/
 | `GET` | `/api/analytics/campaigns/:id/export/contacts` | Export contacts CSV |
 | `GET` | `/api/analytics/campaigns/:id/export/calls` | Export call logs CSV |
 | `GET` | `/api/analytics/export/summary` | Export all campaigns CSV |
+| `GET` | `/api/transcripts?callLogId=X` | Get transcripts for a call |
+| `GET` | `/api/transcripts/campaign/:id` | Get all transcripts for a campaign |
 | `POST` | `/webhooks/telnyx` | Telnyx webhook receiver |
 | `GET` | `/events` | SSE stream (real-time updates) |
 
@@ -473,6 +548,17 @@ docker compose --profile tunnel-named up --build -d
 | **Fly.io** | $0-5/mo | Managed. Free tier works for single user |
 | **Railway** | $5/mo | Fastest deploy. Connect GitHub → done |
 | **Your own server** | Any machine with Docker | `docker compose up` and you're live |
+
+### Database Options
+
+OpenDialer supports local SQLite (default) or any external libSQL-compatible database. Set via environment variables — no code changes needed.
+
+| Option | `DATABASE_URL` | Notes |
+|--------|---------------|-------|
+| **Local SQLite** (default) | `./data/opendialer.db` | Zero config, data in Docker volume |
+| **External libSQL** | `libsql://your-db.example.com` | Set `DATABASE_AUTH_TOKEN` too |
+
+The app auto-detects the URL format and connects accordingly. Migrations run the same way on both.
 
 ### Windows Support
 
@@ -509,7 +595,12 @@ CSV exports include all fields and are compatible with Excel, Google Sheets, Hub
 - [x] Real-time UI via SSE
 - [x] Analytics dashboard + CSV export
 - [x] Docker Compose + Cloudflare Tunnel deployment
-- [ ] [Call transcription (Telnyx built-in + BYO STT)](docs/transcription.md)
+- [x] Local SQLite or external libSQL database support
+- [x] Admin authentication with password + TOTP MFA
+- [x] Telnyx webhook Ed25519 signature verification
+- [x] AMD error handling (`not_sure`, timeout fallback)
+- [x] [Call transcription — Telnyx built-in](docs/transcription.md) (real-time, 4 engines, per-campaign config)
+- [ ] [Call transcription — BYO STT via media streaming](docs/transcription.md)
 - [ ] Twilio as second provider
 - [ ] HubSpot contact import + activity sync
 - [ ] Apollo contact import

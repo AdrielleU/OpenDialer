@@ -44,7 +44,53 @@ function decodeClientState(encoded?: string): Record<string, unknown> {
 }
 
 export const telnyxWebhookRoutes: FastifyPluginAsync = async (fastify) => {
+  // Store raw body for webhook signature verification
+  fastify.addContentTypeParser('application/json', { parseAs: 'string' }, (req, body, done) => {
+    (req as any).rawBody = body;
+    try {
+      done(null, JSON.parse(body as string));
+    } catch (err: any) {
+      done(err, undefined);
+    }
+  });
+
   fastify.post('/telnyx', async (request, reply) => {
+    // Verify webhook signature if public key is configured
+    const publicKey = config.TELNYX_PUBLIC_KEY;
+    if (publicKey) {
+      const signature = request.headers['telnyx-signature-ed25519'] as string | undefined;
+      const timestamp = request.headers['telnyx-timestamp'] as string | undefined;
+
+      if (!signature || !timestamp) {
+        fastify.log.warn('Webhook missing signature headers');
+        return reply.code(403).send({ error: 'Missing signature' });
+      }
+
+      try {
+        const { verify } = await import('node:crypto');
+        const rawBody = (request as any).rawBody as string;
+        const signedPayload = `${timestamp}|${rawBody}`;
+        const publicKeyBuffer = Buffer.from(publicKey, 'base64');
+        const signatureBuffer = Buffer.from(signature, 'base64');
+        const isValid = verify(null, Buffer.from(signedPayload), publicKeyBuffer, signatureBuffer);
+
+        if (!isValid) {
+          fastify.log.warn('Webhook signature verification failed');
+          return reply.code(403).send({ error: 'Invalid signature' });
+        }
+
+        // Reject timestamps older than 5 minutes (replay protection)
+        const webhookTime = parseInt(timestamp, 10) * 1000;
+        if (Math.abs(Date.now() - webhookTime) > 5 * 60 * 1000) {
+          fastify.log.warn('Webhook timestamp too old');
+          return reply.code(403).send({ error: 'Timestamp expired' });
+        }
+      } catch (err: any) {
+        fastify.log.error({ err }, 'Webhook signature verification error');
+        return reply.code(403).send({ error: 'Signature verification failed' });
+      }
+    }
+
     const event = request.body as TelnyxEvent;
     const { event_type, payload } = event.data;
     const { call_control_id, client_state } = payload;

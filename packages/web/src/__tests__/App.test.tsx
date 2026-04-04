@@ -1,7 +1,19 @@
-import { describe, it, expect } from 'vitest';
-import { render, screen } from '@testing-library/react';
+import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { render, screen, waitFor } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 import App from '../App';
+
+// Mock the auth API to return logged-in state
+vi.mock('../lib/api', async () => {
+  const actual = await vi.importActual('../lib/api');
+  return {
+    ...actual,
+    auth: {
+      status: vi.fn().mockResolvedValue({ isSetUp: true, loggedIn: true }),
+      logout: vi.fn().mockResolvedValue({}),
+    },
+  };
+});
 
 function renderApp(route = '/') {
   return render(
@@ -12,23 +24,26 @@ function renderApp(route = '/') {
 }
 
 describe('App Routing', () => {
-  it('renders the sidebar navigation', () => {
+  it('renders the sidebar navigation when authenticated', async () => {
     renderApp();
-    expect(screen.getByText('OpenDialer')).toBeInTheDocument();
+    await waitFor(() => {
+      expect(screen.getByText('OpenDialer')).toBeInTheDocument();
+    });
   });
 
-  it('renders all nav links', () => {
+  it('renders all nav links when authenticated', async () => {
     renderApp();
-    const nav = screen.getByRole('navigation');
-    expect(nav).toBeInTheDocument();
-    expect(screen.getByText('Dialer')).toBeInTheDocument();
-    expect(screen.getByText('Settings')).toBeInTheDocument();
+    await waitFor(() => {
+      expect(screen.getByText('Dialer')).toBeInTheDocument();
+      expect(screen.getByText('Settings')).toBeInTheDocument();
+    });
   });
 
-  it('renders the campaigns page heading on /campaigns', () => {
+  it('renders the campaigns page heading on /campaigns', async () => {
     renderApp('/campaigns');
-    // The page has an h1 "Campaigns" plus a nav link "Campaigns"
-    const headings = screen.getAllByText('Campaigns');
-    expect(headings.length).toBeGreaterThanOrEqual(2);
+    await waitFor(() => {
+      const headings = screen.getAllByText('Campaigns');
+      expect(headings.length).toBeGreaterThanOrEqual(2);
+    });
   });
 });
