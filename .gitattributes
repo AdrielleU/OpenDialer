@@ -1,0 +1,18 @@
+# Ensure LF line endings in containers (critical for Windows users)
+* text=auto eol=lf
+*.md text eol=lf
+*.ts text eol=lf
+*.tsx text eol=lf
+*.json text eol=lf
+*.yml text eol=lf
+*.yaml text eol=lf
+*.sh text eol=lf
+*.conf text eol=lf
+
+# Binary files
+*.mp3 binary
+*.wav binary
+*.ogg binary
+*.png binary
+*.jpg binary
+*.db binary

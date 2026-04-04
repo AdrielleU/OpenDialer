@@ -1,0 +1,22 @@
+{
+  "name": "opendialer",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Open-source self-hosted power dialer",
+  "license": "AGPL-3.0",
+  "scripts": {
+    "dev": "pnpm --filter @opendialer/server dev & pnpm --filter @opendialer/web dev",
+    "build": "pnpm -r build",
+    "lint": "pnpm -r lint"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "pnpm": {
+    "onlyBuiltDependencies": [
+      "better-sqlite3",
+      "esbuild",
+      "@esbuild/linux-x64"
+    ]
+  }
+}
