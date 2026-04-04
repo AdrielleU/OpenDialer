@@ -20,6 +20,8 @@ CREATE TABLE `campaigns` (
 	`caller_id` text NOT NULL,
 	`opener_recording_id` integer,
 	`voicemail_recording_id` integer,
+	`enable_transcription` integer DEFAULT false NOT NULL,
+	`transcription_engine` text DEFAULT 'telnyx',
 	`status` text DEFAULT 'draft' NOT NULL,
 	`created_at` text NOT NULL,
 	`updated_at` text NOT NULL,
@@ -54,4 +56,14 @@ CREATE TABLE `recordings` (
 CREATE TABLE `settings` (
 	`key` text PRIMARY KEY NOT NULL,
 	`value` text NOT NULL
+);
+--> statement-breakpoint
+CREATE TABLE `transcripts` (
+	`id` integer PRIMARY KEY AUTOINCREMENT NOT NULL,
+	`call_log_id` integer NOT NULL,
+	`speaker` text NOT NULL,
+	`content` text NOT NULL,
+	`confidence` real,
+	`created_at` text NOT NULL,
+	FOREIGN KEY (`call_log_id`) REFERENCES `call_logs`(`id`) ON UPDATE no action ON DELETE cascade
 );

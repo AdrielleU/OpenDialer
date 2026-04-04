@@ -9,6 +9,7 @@ import { settingRoutes } from './routes/settings.js';
 import { dialerRoutes } from './routes/dialer.js';
 import { telnyxWebhookRoutes } from './webhooks/telnyx.js';
 import { analyticsRoutes } from './routes/analytics.js';
+import { transcriptRoutes } from './routes/transcripts.js';
 import { sseHandler } from './ws/index.js';
 import { resolve, dirname } from 'node:path';
 import { existsSync, mkdirSync, readFileSync } from 'node:fs';
@@ -52,6 +53,7 @@ export async function buildApp() {
   await app.register(settingRoutes, { prefix: '/api/settings' });
   await app.register(dialerRoutes, { prefix: '/api/dialer' });
   await app.register(analyticsRoutes, { prefix: '/api/analytics' });
+  await app.register(transcriptRoutes, { prefix: '/api/transcripts' });
 
   // Webhooks
   await app.register(telnyxWebhookRoutes, { prefix: '/webhooks' });

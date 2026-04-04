@@ -4,7 +4,7 @@ import { getSession, updateSession } from '../dialer/state.js';
 import { getProvider } from '../providers/index.js';
 import { broadcast } from '../ws/index.js';
 import { db } from '../db/index.js';
-import { campaigns, recordings } from '../db/schema.js';
+import { campaigns, recordings, transcripts, callLogs } from '../db/schema.js';
 import { eq } from 'drizzle-orm';
 import { config } from '../config.js';
 
@@ -196,6 +196,41 @@ export const telnyxWebhookRoutes: FastifyPluginAsync = async (fastify) => {
                 message: 'Opener finished — jump in now!',
               },
             });
+          }
+          break;
+        }
+
+        case 'call.transcription': {
+          const transcriptionData = payload.transcription_data as
+            | { transcript: string; confidence: number; is_final: boolean }
+            | undefined;
+
+          if (transcriptionData?.is_final && transcriptionData.transcript) {
+            // Find the call log for this call
+            const callLog = await db
+              .select()
+              .from(callLogs)
+              .where(eq(callLogs.telnyxCallControlId, call_control_id))
+              .get();
+
+            if (callLog) {
+              await db.insert(transcripts).values({
+                callLogId: callLog.id,
+                speaker: 'inbound',
+                content: transcriptionData.transcript,
+                confidence: transcriptionData.confidence,
+              });
+
+              broadcast({
+                type: 'transcription',
+                data: {
+                  callLogId: callLog.id,
+                  contactId: session.currentContactId,
+                  transcript: transcriptionData.transcript,
+                  confidence: transcriptionData.confidence,
+                },
+              });
+            }
           }
           break;
         }

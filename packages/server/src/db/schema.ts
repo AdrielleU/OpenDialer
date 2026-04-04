@@ -1,4 +1,4 @@
-import { sqliteTable, text, integer } from 'drizzle-orm/sqlite-core';
+import { sqliteTable, text, integer, real } from 'drizzle-orm/sqlite-core';
 import { relations } from 'drizzle-orm';
 
 // --- Settings ---
@@ -14,6 +14,10 @@ export const campaigns = sqliteTable('campaigns', {
   callerId: text('caller_id').notNull(),
   openerRecordingId: integer('opener_recording_id').references(() => recordings.id),
   voicemailRecordingId: integer('voicemail_recording_id').references(() => recordings.id),
+  enableTranscription: integer('enable_transcription', { mode: 'boolean' }).notNull().default(false),
+  transcriptionEngine: text('transcription_engine', {
+    enum: ['telnyx', 'google', 'deepgram', 'azure'],
+  }).default('telnyx'),
   status: text('status', { enum: ['draft', 'active', 'paused', 'completed'] })
     .notNull()
     .default('draft'),
@@ -115,6 +119,27 @@ export const callLogsRelations = relations(callLogs, ({ one }) => ({
   }),
 }));
 
+// --- Transcripts ---
+export const transcripts = sqliteTable('transcripts', {
+  id: integer('id').primaryKey({ autoIncrement: true }),
+  callLogId: integer('call_log_id')
+    .notNull()
+    .references(() => callLogs.id, { onDelete: 'cascade' }),
+  speaker: text('speaker', { enum: ['inbound', 'outbound'] }).notNull(),
+  content: text('content').notNull(),
+  confidence: real('confidence'),
+  createdAt: text('created_at')
+    .notNull()
+    .$defaultFn(() => new Date().toISOString()),
+});
+
+export const transcriptsRelations = relations(transcripts, ({ one }) => ({
+  callLog: one(callLogs, {
+    fields: [transcripts.callLogId],
+    references: [callLogs.id],
+  }),
+}));
+
 // --- Inferred Types ---
 export type Campaign = typeof campaigns.$inferSelect;
 export type NewCampaign = typeof campaigns.$inferInsert;
@@ -124,3 +149,5 @@ export type Recording = typeof recordings.$inferSelect;
 export type NewRecording = typeof recordings.$inferInsert;
 export type CallLog = typeof callLogs.$inferSelect;
 export type NewCallLog = typeof callLogs.$inferInsert;
+export type Transcript = typeof transcripts.$inferSelect;
+export type NewTranscript = typeof transcripts.$inferInsert;

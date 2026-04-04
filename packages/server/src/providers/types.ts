@@ -12,6 +12,12 @@ export interface DialResult {
   callLegId: string;
 }
 
+export interface TranscriptionOptions {
+  language?: string;
+  engine?: 'telnyx' | 'google' | 'deepgram' | 'azure';
+  tracks?: 'inbound' | 'outbound' | 'both';
+}
+
 export interface TelephonyProvider {
   dial(params: DialParams): Promise<DialResult>;
   hangup(callControlId: string): Promise<void>;
@@ -19,4 +25,6 @@ export interface TelephonyProvider {
   bridge(callControlId: string, targetCallControlId: string): Promise<void>;
   startRecording(callControlId: string): Promise<void>;
   stopRecording(callControlId: string): Promise<void>;
+  startTranscription(callControlId: string, options?: TranscriptionOptions): Promise<void>;
+  stopTranscription(callControlId: string): Promise<void>;
 }

@@ -4,6 +4,7 @@ import Dialer from './pages/Dialer';
 import Campaigns from './pages/Campaigns';
 import Contacts from './pages/Contacts';
 import Recordings from './pages/Recordings';
+import Transcription from './pages/Transcription';
 import SettingsPage from './pages/Settings';
 import Analytics from './pages/Analytics';
 
@@ -15,6 +16,7 @@ export default function App() {
         <Route path="/campaigns" element={<Campaigns />} />
         <Route path="/contacts" element={<Contacts />} />
         <Route path="/recordings" element={<Recordings />} />
+        <Route path="/transcription" element={<Transcription />} />
         <Route path="/analytics" element={<Analytics />} />
         <Route path="/settings" element={<SettingsPage />} />
       </Route>

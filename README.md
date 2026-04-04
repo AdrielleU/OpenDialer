@@ -78,6 +78,11 @@ The main screen — sit with your headset on:
 - Call disposition: breakdown with percentages
 - **CSV export**: contacts, call logs, campaign summaries — import into any CRM or spreadsheet
 
+### Call Transcription (Coming Soon)
+Two paths for transcribing calls — see [docs/transcription.md](docs/transcription.md) for full details:
+- **Telnyx Built-in** — real-time transcription via Telnyx's API ($0.025/min), zero infrastructure, 4 engine choices (Telnyx, Google, Deepgram, Azure)
+- **Bring Your Own STT** — stream raw call audio via WebSocket to any provider (Deepgram, OpenAI Whisper, AssemblyAI, etc.)
+
 ### ⚙️ Settings
 - Enter your Telnyx API key, Connection ID, and phone number
 - Test connectivity from the UI
@@ -504,6 +509,7 @@ CSV exports include all fields and are compatible with Excel, Google Sheets, Hub
 - [x] Real-time UI via SSE
 - [x] Analytics dashboard + CSV export
 - [x] Docker Compose + Cloudflare Tunnel deployment
+- [ ] [Call transcription (Telnyx built-in + BYO STT)](docs/transcription.md)
 - [ ] Twilio as second provider
 - [ ] HubSpot contact import + activity sync
 - [ ] Apollo contact import

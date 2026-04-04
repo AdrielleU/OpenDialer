@@ -1,7 +1,7 @@
 {
   "version": "6",
   "dialect": "sqlite",
-  "id": "c5a190a7-51c6-4e50-9bc7-3abef0da494c",
+  "id": "532bbf39-72b9-43d6-b1ca-776b6c0c3192",
   "prevId": "00000000-0000-0000-0000-000000000000",
   "tables": {
     "call_logs": {
@@ -156,6 +156,22 @@
           "primaryKey": false,
           "notNull": false,
           "autoincrement": false
+        },
+        "enable_transcription": {
+          "name": "enable_transcription",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": false
+        },
+        "transcription_engine": {
+          "name": "transcription_engine",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false,
+          "default": "'telnyx'"
         },
         "status": {
           "name": "status",
@@ -388,6 +404,72 @@
       },
       "indexes": {},
       "foreignKeys": {},
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "checkConstraints": {}
+    },
+    "transcripts": {
+      "name": "transcripts",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "integer",
+          "primaryKey": true,
+          "notNull": true,
+          "autoincrement": true
+        },
+        "call_log_id": {
+          "name": "call_log_id",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "speaker": {
+          "name": "speaker",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "content": {
+          "name": "content",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "confidence": {
+          "name": "confidence",
+          "type": "real",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {
+        "transcripts_call_log_id_call_logs_id_fk": {
+          "name": "transcripts_call_log_id_call_logs_id_fk",
+          "tableFrom": "transcripts",
+          "tableTo": "call_logs",
+          "columnsFrom": [
+            "call_log_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        }
+      },
       "compositePrimaryKeys": {},
       "uniqueConstraints": {},
       "checkConstraints": {}

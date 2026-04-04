@@ -1,4 +1,4 @@
-import type { Campaign, Contact, Recording, DialerStatus } from '../types';
+import type { Campaign, Contact, Recording, DialerStatus, CallTranscript } from '../types';
 
 const BASE = '/api';
 
@@ -94,6 +94,13 @@ export const api = {
     exportContacts: (campaignId: number) => downloadFile(`/analytics/campaigns/${campaignId}/export/contacts`, `contacts-campaign-${campaignId}.csv`),
     exportCallLogs: (campaignId: number) => downloadFile(`/analytics/campaigns/${campaignId}/export/calls`, `call-logs-campaign-${campaignId}.csv`),
     exportSummary: () => downloadFile('/analytics/export/summary', 'campaigns-summary.csv'),
+  },
+
+  transcripts: {
+    byCampaign: (campaignId: number) =>
+      request<CallTranscript[]>(`/transcripts/campaign/${campaignId}`),
+    byCallLog: (callLogId: number) =>
+      request<CallTranscript[]>(`/transcripts?callLogId=${callLogId}`),
   },
 
   dialer: {

@@ -72,7 +72,25 @@ export interface DialerStatus {
   sessionStartedAt: string | null;
 }
 
+export interface TranscriptLine {
+  id: number;
+  speaker: 'inbound' | 'outbound';
+  content: string;
+  confidence: number | null;
+  createdAt: string;
+}
+
+export interface CallTranscript {
+  callLogId: number;
+  contactId: number;
+  contactName: string | null;
+  contactPhone: string;
+  disposition: string | null;
+  callStartedAt: string | null;
+  lines: TranscriptLine[];
+}
+
 export interface WsEvent {
-  type: 'call_status_changed' | 'session_status_changed' | 'call_log_added' | 'contact_updated' | 'error';
+  type: 'call_status_changed' | 'session_status_changed' | 'call_log_added' | 'contact_updated' | 'transcription' | 'error';
   data: Record<string, unknown>;
 }

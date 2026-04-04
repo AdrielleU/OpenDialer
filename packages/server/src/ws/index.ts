@@ -37,6 +37,7 @@ export interface WsEvent {
     | 'session_status_changed'
     | 'call_log_added'
     | 'contact_updated'
+    | 'transcription'
     | 'error';
   data: Record<string, unknown>;
 }

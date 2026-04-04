@@ -1,5 +1,5 @@
 import Telnyx from 'telnyx';
-import type { TelephonyProvider, DialParams, DialResult } from './types.js';
+import type { TelephonyProvider, DialParams, DialResult, TranscriptionOptions } from './types.js';
 
 export class TelnyxProvider implements TelephonyProvider {
   private client: any;
@@ -54,5 +54,24 @@ export class TelnyxProvider implements TelephonyProvider {
 
   async stopRecording(callControlId: string): Promise<void> {
     await this.client.calls.actions.stopRecording(callControlId);
+  }
+
+  async startTranscription(callControlId: string, options: TranscriptionOptions = {}): Promise<void> {
+    const engineMap: Record<string, string> = {
+      telnyx: 'B',
+      google: 'A',
+      deepgram: 'Deepgram',
+      azure: 'Azure',
+    };
+
+    await this.client.calls.actions.transcriptionStart(callControlId, {
+      language: options.language || 'en',
+      transcription_engine: engineMap[options.engine || 'telnyx'] || 'B',
+      transcription_tracks: options.tracks || 'both',
+    });
+  }
+
+  async stopTranscription(callControlId: string): Promise<void> {
+    await this.client.calls.actions.transcriptionStop(callControlId);
   }
 }

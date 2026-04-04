@@ -1,11 +1,12 @@
 import { NavLink, Outlet } from 'react-router-dom';
-import { Phone, Users, FileAudio, Settings, LayoutList, BarChart3 } from 'lucide-react';
+import { Phone, Users, FileAudio, Settings, LayoutList, BarChart3, MessageSquareText } from 'lucide-react';
 
 const navItems = [
   { to: '/', label: 'Dialer', icon: Phone },
   { to: '/campaigns', label: 'Campaigns', icon: LayoutList },
   { to: '/contacts', label: 'Contacts', icon: Users },
   { to: '/recordings', label: 'Recordings', icon: FileAudio },
+  { to: '/transcription', label: 'Transcription', icon: MessageSquareText },
   { to: '/analytics', label: 'Analytics', icon: BarChart3 },
   { to: '/settings', label: 'Settings', icon: Settings },
 ];
