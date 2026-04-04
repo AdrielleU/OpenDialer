@@ -4,6 +4,8 @@ export interface Campaign {
   callerId: string;
   openerRecordingId: number | null;
   voicemailRecordingId: number | null;
+  enableTranscription?: boolean;
+  transcriptionEngine?: string;
   status: 'draft' | 'active' | 'paused' | 'completed';
   createdAt: string;
   updatedAt: string;
@@ -37,10 +39,12 @@ export interface CallLog {
   id: number;
   campaignId: number;
   contactId: number;
+  operatorId: number | null;
   telnyxCallControlId: string | null;
   startedAt: string | null;
   endedAt: string | null;
   durationSeconds: number | null;
+  talkTimeSeconds: number | null;
   disposition: 'voicemail' | 'connected' | 'no_answer' | 'busy' | 'failed' | null;
   recordingUrl: string | null;
   humanTookOver: boolean;
@@ -56,20 +60,57 @@ export type CallState =
   | 'human_answered'
   | 'opener_playing'
   | 'operator_bridged'
+  | 'waiting_for_operator'
   | 'ended';
 
 export type SessionStatus = 'idle' | 'running' | 'paused' | 'stopped';
+export type OperatorAvailability = 'available' | 'on_call' | 'wrap_up' | 'offline';
+
+export interface OperatorStatus {
+  userId: number;
+  name: string;
+  availability: OperatorAvailability;
+  bridgedContactId: number | null;
+}
+
+export interface InFlightCallStatus {
+  callControlId: string;
+  contactId: number;
+  callState: CallState;
+  assignedOperatorId: number | null;
+}
 
 export interface DialerStatus {
   status: SessionStatus;
   campaignId: number;
-  currentContactId: number | null;
-  currentCallState: CallState;
   queueRemaining: number;
   callsMade: number;
   voicemailsDropped: number;
   connects: number;
   sessionStartedAt: string | null;
+  operators: OperatorStatus[];
+  inFlightCalls: InFlightCallStatus[];
+  waitingCalls: number;
+}
+
+export interface User {
+  id: number;
+  email: string;
+  name: string;
+  role: 'admin' | 'operator';
+  mustChangePassword?: boolean;
+  mustSetupMfa?: boolean;
+  createdAt: string;
+  lastLoginAt: string | null;
+}
+
+export interface RecordingProfile {
+  id: number;
+  name: string;
+  openerRecordingId: number | null;
+  voicemailRecordingId: number | null;
+  isDefault: boolean;
+  createdAt: string;
 }
 
 export interface TranscriptLine {
@@ -91,6 +132,15 @@ export interface CallTranscript {
 }
 
 export interface WsEvent {
-  type: 'call_status_changed' | 'session_status_changed' | 'call_log_added' | 'contact_updated' | 'transcription' | 'error';
+  type:
+    | 'call_status_changed'
+    | 'session_status_changed'
+    | 'call_log_added'
+    | 'contact_updated'
+    | 'transcription'
+    | 'call_routed_to_you'
+    | 'operator_status_changed'
+    | 'call_waiting'
+    | 'error';
   data: Record<string, unknown>;
 }

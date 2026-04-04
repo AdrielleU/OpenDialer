@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, createContext, useContext } from 'react';
 import { Routes, Route } from 'react-router-dom';
 import Layout from './components/Layout';
 import Login from './pages/Login';
@@ -7,18 +7,69 @@ import Campaigns from './pages/Campaigns';
 import Contacts from './pages/Contacts';
 import Recordings from './pages/Recordings';
 import Transcription from './pages/Transcription';
+import Team from './pages/Team';
 import SettingsPage from './pages/Settings';
 import Analytics from './pages/Analytics';
 import { auth } from './lib/api';
 
+interface UserContext {
+  userId: number;
+  name: string;
+  email: string;
+  role: 'admin' | 'operator';
+}
+
+const UserCtx = createContext<UserContext | null>(null);
+export function useUser() {
+  return useContext(UserCtx);
+}
+
 export default function App() {
   const [authenticated, setAuthenticated] = useState<boolean | null>(null);
+  const [user, setUser] = useState<UserContext | null>(null);
 
   useEffect(() => {
     auth.status()
-      .then((res) => setAuthenticated(res.loggedIn))
+      .then((res) => {
+        if (res.loggedIn && res.user) {
+          if (res.user.mustChangePassword || res.user.mustSetupMfa) {
+            // Need setup — show login for wizard
+            setAuthenticated(false);
+          } else {
+            setUser({
+              userId: res.user.id,
+              name: res.user.name,
+              email: res.user.email,
+              role: res.user.role,
+            });
+            setAuthenticated(true);
+          }
+        } else if (res.loggedIn && res.mode === 'legacy') {
+          setUser({ userId: 0, name: 'Admin', email: '', role: 'admin' });
+          setAuthenticated(true);
+        } else {
+          setAuthenticated(false);
+        }
+      })
       .catch(() => setAuthenticated(false));
   }, []);
+
+  const handleAuthenticated = () => {
+    // Re-fetch user info after login
+    auth.status().then((res) => {
+      if (res.user) {
+        setUser({
+          userId: res.user.id,
+          name: res.user.name,
+          email: res.user.email,
+          role: res.user.role,
+        });
+      } else {
+        setUser({ userId: 0, name: 'Admin', email: '', role: 'admin' });
+      }
+      setAuthenticated(true);
+    });
+  };
 
   if (authenticated === null) {
     return (
@@ -29,20 +80,32 @@ export default function App() {
   }
 
   if (!authenticated) {
-    return <Login onAuthenticated={() => setAuthenticated(true)} />;
+    return <Login onAuthenticated={handleAuthenticated} />;
   }
 
   return (
-    <Routes>
-      <Route element={<Layout onLogout={() => setAuthenticated(false)} />}>
-        <Route path="/" element={<Dialer />} />
-        <Route path="/campaigns" element={<Campaigns />} />
-        <Route path="/contacts" element={<Contacts />} />
-        <Route path="/recordings" element={<Recordings />} />
-        <Route path="/transcription" element={<Transcription />} />
-        <Route path="/analytics" element={<Analytics />} />
-        <Route path="/settings" element={<SettingsPage />} />
-      </Route>
-    </Routes>
+    <UserCtx.Provider value={user}>
+      <Routes>
+        <Route
+          element={
+            <Layout
+              onLogout={() => {
+                setAuthenticated(false);
+                setUser(null);
+              }}
+            />
+          }
+        >
+          <Route path="/" element={<Dialer />} />
+          <Route path="/campaigns" element={<Campaigns />} />
+          <Route path="/contacts" element={<Contacts />} />
+          <Route path="/recordings" element={<Recordings />} />
+          <Route path="/transcription" element={<Transcription />} />
+          {user?.role === 'admin' && <Route path="/team" element={<Team />} />}
+          <Route path="/analytics" element={<Analytics />} />
+          <Route path="/settings" element={<SettingsPage />} />
+        </Route>
+      </Routes>
+    </UserCtx.Provider>
   );
 }

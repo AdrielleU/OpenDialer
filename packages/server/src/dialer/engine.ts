@@ -1,9 +1,23 @@
 import { db } from '../db/index.js';
-import { contacts, campaigns, callLogs, recordings, settings } from '../db/schema.js';
+import { contacts, campaigns, callLogs, recordings, recordingProfiles, settings } from '../db/schema.js';
 import { eq, and } from 'drizzle-orm';
-import { getSession, updateSession, resetSession } from './state.js';
+import {
+  getTeamSession,
+  updateTeamSession,
+  resetTeamSession,
+  addInFlightCall,
+  getInFlightCall,
+  updateInFlightCall,
+  removeInFlightCall,
+  findAvailableOperator,
+  countAvailableOperators,
+  setOperatorAvailability,
+  getOperator,
+  popWaitingCall,
+  addToWaitingQueue,
+} from './team-state.js';
 import { getProvider } from '../providers/index.js';
-import { broadcast } from '../ws/index.js';
+import { broadcast, broadcastToUser } from '../ws/index.js';
 import { config } from '../config.js';
 
 async function getSetting(key: string): Promise<string | undefined> {
@@ -13,7 +27,7 @@ async function getSetting(key: string): Promise<string | undefined> {
 
 export const dialerEngine = {
   async startSession(campaignId: number) {
-    const session = getSession();
+    const session = getTeamSession();
     if (session.status === 'running') {
       throw new Error('A session is already running. Stop it first.');
     }
@@ -21,7 +35,6 @@ export const dialerEngine = {
     const campaign = await db.select().from(campaigns).where(eq(campaigns.id, campaignId)).get();
     if (!campaign) throw new Error('Campaign not found');
 
-    // Load pending contacts
     const pendingContacts = await db
       .select()
       .from(contacts)
@@ -33,20 +46,17 @@ export const dialerEngine = {
 
     const queue = pendingContacts.map((c) => c.id);
 
-    updateSession({
+    updateTeamSession({
       campaignId,
       status: 'running',
       queue,
-      currentContactId: null,
-      currentCallControlId: null,
-      currentCallState: 'idle',
+      maxParallelLines: Math.max(session.operators.size * 3, 1),
       callsMade: 0,
       voicemailsDropped: 0,
       connects: 0,
       sessionStartedAt: new Date().toISOString(),
     });
 
-    // Update campaign status
     await db.update(campaigns).set({ status: 'active' }).where(eq(campaigns.id, campaignId));
 
     broadcast({
@@ -54,16 +64,15 @@ export const dialerEngine = {
       data: { status: 'running', campaignId, queueLength: queue.length },
     });
 
-    // Start dialing
-    await this.dialNext();
+    await this.dialNextBatch();
   },
 
-  async dialNext(): Promise<void> {
-    const session = getSession();
+  async dialNextBatch(): Promise<void> {
+    const session = getTeamSession();
     if (session.status !== 'running') return;
-    if (session.queue.length === 0) {
+    if (session.queue.length === 0 && session.inFlightCalls.size === 0) {
       // Campaign complete
-      updateSession({ status: 'stopped', currentCallState: 'idle' });
+      updateTeamSession({ status: 'stopped' });
       await db
         .update(campaigns)
         .set({ status: 'completed' })
@@ -75,21 +84,29 @@ export const dialerEngine = {
       return;
     }
 
-    const nextContactId = session.queue[0];
-    const remainingQueue = session.queue.slice(1);
+    const available = countAvailableOperators();
+    const targetInFlight = Math.min(
+      Math.max(available * 3, 1), // 3:1 ratio, minimum 1
+      session.maxParallelLines,
+      session.queue.length + session.inFlightCalls.size, // don't exceed total
+    );
+    const toDial = Math.max(0, targetInFlight - session.inFlightCalls.size);
 
-    const contact = await db.select().from(contacts).where(eq(contacts.id, nextContactId)).get();
-    if (!contact) {
-      updateSession({ queue: remainingQueue });
-      return this.dialNext();
+    for (let i = 0; i < toDial; i++) {
+      if (session.queue.length === 0) break;
+      const contactId = session.queue.shift()!;
+      await this.dialOne(contactId).catch(() => {
+        // On error, put contact back or skip
+      });
     }
+  },
 
-    updateSession({
-      queue: remainingQueue,
-      currentContactId: nextContactId,
-      currentCallState: 'dialing',
-      callsMade: session.callsMade + 1,
-    });
+  async dialOne(contactId: number): Promise<void> {
+    const session = getTeamSession();
+    const contact = await db.select().from(contacts).where(eq(contacts.id, contactId)).get();
+    if (!contact) return;
+
+    updateTeamSession({ callsMade: session.callsMade + 1 });
 
     broadcast({
       type: 'call_status_changed',
@@ -99,7 +116,7 @@ export const dialerEngine = {
         contactName: contact.name,
         phone: contact.phone,
         company: contact.company,
-        queueRemaining: remainingQueue.length,
+        queueRemaining: session.queue.length,
       },
     });
 
@@ -117,7 +134,7 @@ export const dialerEngine = {
 
       const clientState = JSON.stringify({
         campaignId: session.campaignId,
-        contactId: nextContactId,
+        contactId,
       });
 
       const result = await provider.dial({
@@ -129,182 +146,358 @@ export const dialerEngine = {
         clientState,
       });
 
-      updateSession({ currentCallControlId: result.callControlId });
+      // Track in-flight
+      addInFlightCall(result.callControlId, contactId);
 
       // Create call log entry
       await db.insert(callLogs).values({
         campaignId: session.campaignId,
-        contactId: nextContactId,
+        contactId,
         telnyxCallControlId: result.callControlId,
         startedAt: new Date().toISOString(),
       });
 
-      // Update contact
       await db
         .update(contacts)
         .set({
           callCount: contact.callCount + 1,
           lastCalledAt: new Date().toISOString(),
         })
-        .where(eq(contacts.id, nextContactId));
+        .where(eq(contacts.id, contactId));
     } catch (err: any) {
       broadcast({
         type: 'error',
-        data: { message: `Failed to dial: ${err.message}`, contactId: nextContactId },
+        data: { message: `Failed to dial: ${err.message}`, contactId },
       });
-
-      // Skip to next on error
-      updateSession({ currentCallState: 'idle', currentContactId: null });
-      setTimeout(() => this.dialNext(), 1000);
     }
   },
 
+  // Route a human-answered call to an available operator
+  async routeToOperator(callControlId: string): Promise<boolean> {
+    const call = getInFlightCall(callControlId);
+    if (!call) return false;
+
+    const operator = findAvailableOperator();
+    if (!operator) {
+      // No available operator — add to waiting queue
+      updateInFlightCall(callControlId, { callState: 'waiting_for_operator' });
+      addToWaitingQueue(callControlId);
+      broadcast({
+        type: 'call_waiting',
+        data: { callControlId, contactId: call.contactId },
+      });
+      return false;
+    }
+
+    // Assign operator
+    updateInFlightCall(callControlId, {
+      callState: 'operator_bridged',
+      assignedOperatorId: operator.userId,
+      bridgedAt: new Date().toISOString(),
+    });
+
+    setOperatorAvailability(operator.userId, 'on_call');
+    const op = getOperator(operator.userId)!;
+    op.bridgedToCallId = callControlId;
+    op.bridgedContactId = call.contactId;
+
+    // Auto-bridge
+    if (operator.webrtcCallControlId) {
+      try {
+        const provider = await getProvider();
+        await provider.bridge(callControlId, operator.webrtcCallControlId);
+      } catch (err: any) {
+        broadcast({
+          type: 'error',
+          data: { message: `Bridge failed: ${err.message}`, contactId: call.contactId },
+        });
+        // Revert operator state
+        setOperatorAvailability(operator.userId, 'available');
+        updateInFlightCall(callControlId, { callState: 'human_answered', assignedOperatorId: null });
+        return false;
+      }
+    }
+
+    // Notify the specific operator
+    broadcastToUser(operator.userId, {
+      type: 'call_routed_to_you',
+      data: {
+        callControlId,
+        contactId: call.contactId,
+        operatorId: operator.userId,
+      },
+    });
+
+    // Notify everyone about operator status change
+    broadcast({
+      type: 'operator_status_changed',
+      data: {
+        operatorId: operator.userId,
+        name: operator.name,
+        availability: 'on_call',
+        contactId: call.contactId,
+      },
+    });
+
+    // Update call log with operator
+    await db
+      .update(callLogs)
+      .set({ operatorId: operator.userId, humanTookOver: true })
+      .where(eq(callLogs.telnyxCallControlId, callControlId));
+
+    // Start transcription if enabled
+    try {
+      const session = getTeamSession();
+      const campaign = await db
+        .select()
+        .from(campaigns)
+        .where(eq(campaigns.id, session.campaignId))
+        .get();
+
+      if (campaign?.enableTranscription) {
+        const provider = await getProvider();
+        await provider.startTranscription(callControlId, {
+          engine: (campaign.transcriptionEngine as any) || 'telnyx',
+          tracks: 'both',
+        });
+      }
+    } catch {
+      // Don't fail the bridge if transcription fails
+    }
+
+    return true;
+  },
+
+  // When an operator becomes available, check waiting queue
+  async tryRouteWaitingCall(): Promise<void> {
+    const waitingCallId = popWaitingCall();
+    if (!waitingCallId) {
+      // No waiting calls — dial more
+      await this.dialNextBatch();
+      return;
+    }
+    await this.routeToOperator(waitingCallId);
+  },
+
   pauseSession() {
-    const session = getSession();
+    const session = getTeamSession();
     if (session.status !== 'running') throw new Error('No running session to pause');
-    updateSession({ status: 'paused' });
+    updateTeamSession({ status: 'paused' });
     broadcast({ type: 'session_status_changed', data: { status: 'paused' } });
   },
 
   async resumeSession() {
-    const session = getSession();
+    const session = getTeamSession();
     if (session.status !== 'paused') throw new Error('No paused session to resume');
-    updateSession({ status: 'running' });
+    updateTeamSession({ status: 'running' });
     broadcast({ type: 'session_status_changed', data: { status: 'running' } });
-
-    // If no active call, dial next
-    if (!session.currentCallControlId) {
-      await this.dialNext();
-    }
+    await this.dialNextBatch();
   },
 
   async stopSession() {
-    const session = getSession();
+    const session = getTeamSession();
     if (session.status === 'idle') throw new Error('No session to stop');
 
-    // Hangup current call if active
-    if (session.currentCallControlId) {
+    // Hangup all in-flight calls
+    const provider = await getProvider();
+    for (const [callControlId] of session.inFlightCalls) {
       try {
-        const provider = await getProvider();
-        await provider.hangup(session.currentCallControlId);
+        await provider.hangup(callControlId);
       } catch {
         // Ignore hangup errors
       }
     }
 
-    resetSession();
+    resetTeamSession();
     broadcast({ type: 'session_status_changed', data: { status: 'stopped' } });
   },
 
-  async skipCurrent() {
-    const session = getSession();
-    if (!session.currentCallControlId) throw new Error('No active call to skip');
+  async skipCall(callControlId: string) {
+    const call = getInFlightCall(callControlId);
+    if (!call) throw new Error('No active call to skip');
 
     try {
       const provider = await getProvider();
-      await provider.hangup(session.currentCallControlId);
+      await provider.hangup(callControlId);
     } catch {
       // Ignore hangup errors
     }
 
-    updateSession({
-      currentCallControlId: null,
-      currentContactId: null,
-      currentCallState: 'idle',
-    });
+    // Free the operator if one was assigned
+    if (call.assignedOperatorId) {
+      setOperatorAvailability(call.assignedOperatorId, 'available');
+      broadcast({
+        type: 'operator_status_changed',
+        data: { operatorId: call.assignedOperatorId, availability: 'available' },
+      });
+    }
 
-    // Update contact status
-    if (session.currentContactId) {
+    removeInFlightCall(callControlId);
+
+    if (call.contactId) {
       await db
         .update(contacts)
         .set({ status: 'no_answer' })
-        .where(eq(contacts.id, session.currentContactId));
+        .where(eq(contacts.id, call.contactId));
     }
 
-    await this.dialNext();
+    await this.dialNextBatch();
   },
 
-  async jumpIn() {
-    const session = getSession();
-    if (!session.currentCallControlId) throw new Error('No active call to jump into');
-    if (session.currentCallState !== 'human_answered' && session.currentCallState !== 'opener_playing') {
-      throw new Error('Can only jump in when a human has answered');
+  // Legacy jump-in for single-operator mode
+  async jumpIn(userId?: number) {
+    const session = getTeamSession();
+    // Find the first human-answered call
+    let targetCall: { callControlId: string; contactId: number } | null = null;
+    for (const [id, call] of session.inFlightCalls) {
+      if (call.callState === 'human_answered' || call.callState === 'opener_playing') {
+        targetCall = { callControlId: id, contactId: call.contactId };
+        break;
+      }
     }
+    if (!targetCall) throw new Error('No call waiting for jump in');
 
-    // The bridge logic is handled separately — this triggers the bridge
-    // The operator's WebRTC call leg ID needs to be known
-    broadcast({
-      type: 'call_status_changed',
-      data: {
+    if (userId) {
+      // Route to specific operator
+      const op = getOperator(userId);
+      if (!op || !op.webrtcCallControlId) {
+        throw new Error('Operator not connected');
+      }
+
+      updateInFlightCall(targetCall.callControlId, {
         callState: 'operator_bridged',
-        contactId: session.currentContactId,
-        message: 'Operator bridging into call',
-      },
-    });
+        assignedOperatorId: userId,
+        bridgedAt: new Date().toISOString(),
+      });
+      setOperatorAvailability(userId, 'on_call');
+      op.bridgedToCallId = targetCall.callControlId;
+      op.bridgedContactId = targetCall.contactId;
 
-    updateSession({ currentCallState: 'operator_bridged' });
+      const provider = await getProvider();
+      await provider.bridge(targetCall.callControlId, op.webrtcCallControlId);
+
+      broadcast({
+        type: 'call_status_changed',
+        data: {
+          callState: 'operator_bridged',
+          contactId: targetCall.contactId,
+          operatorId: userId,
+        },
+      });
+    } else {
+      // Legacy: bridge using first operator
+      await this.routeToOperator(targetCall.callControlId);
+    }
   },
 
   getStatus() {
-    const session = getSession();
+    const session = getTeamSession();
+    const operators = Array.from(session.operators.values()).map((op) => ({
+      userId: op.userId,
+      name: op.name,
+      availability: op.availability,
+      bridgedContactId: op.bridgedContactId,
+    }));
+
+    const inFlightCalls = Array.from(session.inFlightCalls.values()).map((call) => ({
+      callControlId: call.callControlId,
+      contactId: call.contactId,
+      callState: call.callState,
+      assignedOperatorId: call.assignedOperatorId,
+    }));
+
     return {
       status: session.status,
       campaignId: session.campaignId,
-      currentContactId: session.currentContactId,
-      currentCallState: session.currentCallState,
       queueRemaining: session.queue.length,
       callsMade: session.callsMade,
       voicemailsDropped: session.voicemailsDropped,
       connects: session.connects,
       sessionStartedAt: session.sessionStartedAt,
+      operators,
+      inFlightCalls,
+      waitingCalls: session.waitingCalls.length,
     };
   },
 
   // Called by webhook handler when a call ends
   async handleCallEnd(callControlId: string, disposition: string) {
-    const session = getSession();
-    if (session.currentCallControlId !== callControlId) return;
+    const call = getInFlightCall(callControlId);
+    if (!call) return;
+
+    const session = getTeamSession();
+
+    // Free the operator
+    if (call.assignedOperatorId) {
+      setOperatorAvailability(call.assignedOperatorId, 'wrap_up');
+      broadcast({
+        type: 'operator_status_changed',
+        data: { operatorId: call.assignedOperatorId, availability: 'wrap_up' },
+      });
+
+      // Calculate talk time
+      if (call.bridgedAt) {
+        const talkTimeSeconds = Math.round(
+          (Date.now() - new Date(call.bridgedAt).getTime()) / 1000,
+        );
+        await db
+          .update(callLogs)
+          .set({ talkTimeSeconds })
+          .where(eq(callLogs.telnyxCallControlId, callControlId));
+      }
+    }
+
+    removeInFlightCall(callControlId);
 
     // Update call log
     await db
       .update(callLogs)
       .set({
         endedAt: new Date().toISOString(),
-        disposition: disposition as 'voicemail' | 'connected' | 'no_answer' | 'busy' | 'failed',
+        disposition: disposition as any,
       })
       .where(eq(callLogs.telnyxCallControlId, callControlId));
 
     // Update contact status
-    if (session.currentContactId) {
+    if (call.contactId) {
       await db
         .update(contacts)
         .set({ status: disposition as any })
-        .where(eq(contacts.id, session.currentContactId));
+        .where(eq(contacts.id, call.contactId));
 
       broadcast({
         type: 'contact_updated',
-        data: { contactId: session.currentContactId, status: disposition },
+        data: { contactId: call.contactId, status: disposition },
       });
     }
 
     // Update stats
-    const updates: Partial<typeof session> = {
-      currentCallControlId: null,
-      currentContactId: null,
-      currentCallState: 'idle',
-    };
-    if (disposition === 'voicemail') updates.voicemailsDropped = session.voicemailsDropped + 1;
-    if (disposition === 'connected') updates.connects = session.connects + 1;
-    updateSession(updates);
+    if (disposition === 'voicemail')
+      updateTeamSession({ voicemailsDropped: session.voicemailsDropped + 1 });
+    if (disposition === 'connected') updateTeamSession({ connects: session.connects + 1 });
 
     broadcast({
       type: 'call_log_added',
-      data: { callControlId, disposition },
+      data: { callControlId, disposition, contactId: call.contactId },
     });
 
     // Auto-advance if running
     if (session.status === 'running') {
-      setTimeout(() => this.dialNext(), 500);
+      setTimeout(() => this.dialNextBatch(), 500);
+    }
+  },
+
+  // Operator sets themselves back to available after wrap-up
+  async operatorReady(userId: number) {
+    setOperatorAvailability(userId, 'available');
+    broadcast({
+      type: 'operator_status_changed',
+      data: { operatorId: userId, availability: 'available' },
+    });
+
+    const session = getTeamSession();
+    if (session.status === 'running') {
+      await this.tryRouteWaitingCall();
     }
   },
 };

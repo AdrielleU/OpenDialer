@@ -1,6 +1,10 @@
 import type { FastifyPluginAsync } from 'fastify';
 import { dialerEngine } from '../dialer/engine.js';
-import { getSession, updateSession } from '../dialer/state.js';
+import {
+  getTeamSession,
+  getInFlightCall,
+  updateInFlightCall,
+} from '../dialer/team-state.js';
 import { getProvider } from '../providers/index.js';
 import { broadcast } from '../ws/index.js';
 import { db } from '../db/index.js';
@@ -10,12 +14,13 @@ import { config } from '../config.js';
 
 // AMD timeout — if detection doesn't fire within 35s of call.answered, treat as human
 const AMD_TIMEOUT_MS = 35_000;
-let amdTimeoutHandle: ReturnType<typeof setTimeout> | null = null;
+const amdTimeouts = new Map<string, ReturnType<typeof setTimeout>>();
 
-function clearAmdTimeout() {
-  if (amdTimeoutHandle) {
-    clearTimeout(amdTimeoutHandle);
-    amdTimeoutHandle = null;
+function clearAmdTimeout(callControlId: string) {
+  const handle = amdTimeouts.get(callControlId);
+  if (handle) {
+    clearTimeout(handle);
+    amdTimeouts.delete(callControlId);
   }
 }
 
@@ -79,7 +84,6 @@ export const telnyxWebhookRoutes: FastifyPluginAsync = async (fastify) => {
           return reply.code(403).send({ error: 'Invalid signature' });
         }
 
-        // Reject timestamps older than 5 minutes (replay protection)
         const webhookTime = parseInt(timestamp, 10) * 1000;
         if (Math.abs(Date.now() - webhookTime) > 5 * 60 * 1000) {
           fastify.log.warn('Webhook timestamp too old');
@@ -98,101 +102,103 @@ export const telnyxWebhookRoutes: FastifyPluginAsync = async (fastify) => {
 
     fastify.log.info({ event_type, call_control_id }, 'Telnyx webhook received');
 
-    const session = getSession();
+    const session = getTeamSession();
 
     try {
       switch (event_type) {
         case 'call.initiated': {
-          updateSession({ currentCallState: 'ringing' });
+          updateInFlightCall(call_control_id, { callState: 'ringing' });
           broadcast({
             type: 'call_status_changed',
-            data: { callState: 'ringing', contactId: session.currentContactId },
+            data: {
+              callState: 'ringing',
+              contactId: getInFlightCall(call_control_id)?.contactId,
+              callControlId: call_control_id,
+            },
           });
           break;
         }
 
         case 'call.answered': {
-          // AMD is enabled, so wait for detection result
-          updateSession({ currentCallState: 'amd_detecting' });
+          updateInFlightCall(call_control_id, { callState: 'amd_detecting' });
           broadcast({
             type: 'call_status_changed',
-            data: { callState: 'amd_detecting', contactId: session.currentContactId },
+            data: {
+              callState: 'amd_detecting',
+              contactId: getInFlightCall(call_control_id)?.contactId,
+              callControlId: call_control_id,
+            },
           });
 
           // Safety timeout — if AMD detection never fires, treat as human
-          clearAmdTimeout();
-          amdTimeoutHandle = setTimeout(() => {
-            const currentSession = getSession();
-            if (currentSession.currentCallState === 'amd_detecting') {
-              fastify.log.warn({ call_control_id }, 'AMD timeout — no detection result received');
-              updateSession({ currentCallState: 'human_answered' });
-              broadcast({
-                type: 'call_status_changed',
-                data: {
-                  callState: 'human_answered',
-                  contactId: currentSession.currentContactId,
-                  message: 'AMD timed out — treating as human. Ready to jump in.',
-                },
-              });
-            }
-          }, AMD_TIMEOUT_MS);
+          clearAmdTimeout(call_control_id);
+          amdTimeouts.set(
+            call_control_id,
+            setTimeout(async () => {
+              const call = getInFlightCall(call_control_id);
+              if (call?.callState === 'amd_detecting') {
+                fastify.log.warn({ call_control_id }, 'AMD timeout — no detection result');
+                updateInFlightCall(call_control_id, { callState: 'human_answered' });
+                broadcast({
+                  type: 'call_status_changed',
+                  data: {
+                    callState: 'human_answered',
+                    contactId: call.contactId,
+                    callControlId: call_control_id,
+                    message: 'AMD timed out — treating as human.',
+                  },
+                });
+                // Auto-route to available operator
+                await dialerEngine.routeToOperator(call_control_id);
+              }
+            }, AMD_TIMEOUT_MS),
+          );
           break;
         }
 
         case 'call.machine.detection.ended': {
           const result = payload.result;
-          clearAmdTimeout();
+          clearAmdTimeout(call_control_id);
 
           if (result === 'machine') {
-            // Wait for greeting to end (beep detection)
-            updateSession({ currentCallState: 'voicemail_dropping' });
-            broadcast({
-              type: 'call_status_changed',
-              data: { callState: 'voicemail_dropping', contactId: session.currentContactId },
-            });
-          } else if (result === 'not_sure') {
-            // AMD couldn't determine — treat as human but warn the operator
-            fastify.log.warn({ call_control_id }, 'AMD returned not_sure — treating as human');
-            updateSession({ currentCallState: 'human_answered' });
+            updateInFlightCall(call_control_id, { callState: 'voicemail_dropping' });
             broadcast({
               type: 'call_status_changed',
               data: {
-                callState: 'human_answered',
-                contactId: session.currentContactId,
-                message: 'AMD inconclusive — could be human or machine. Ready to jump in.',
+                callState: 'voicemail_dropping',
+                contactId: getInFlightCall(call_control_id)?.contactId,
+                callControlId: call_control_id,
               },
             });
-
-            try {
-              await playOpener(call_control_id, session.campaignId, state);
-            } catch (err: any) {
-              fastify.log.error({ err, call_control_id }, 'Failed to play opener after not_sure AMD');
-              broadcast({
-                type: 'error',
-                data: { message: `Failed to play opener: ${err.message}` },
-              });
-            }
           } else {
-            // Human answered — play opener
-            updateSession({ currentCallState: 'human_answered' });
+            // Human or not_sure — route to operator
+            const isNotSure = result === 'not_sure';
+            if (isNotSure) {
+              fastify.log.warn({ call_control_id }, 'AMD returned not_sure — treating as human');
+            }
+
+            updateInFlightCall(call_control_id, { callState: 'human_answered' });
             broadcast({
               type: 'call_status_changed',
               data: {
                 callState: 'human_answered',
-                contactId: session.currentContactId,
-                message: 'Human answered — ready to jump in!',
+                contactId: getInFlightCall(call_control_id)?.contactId,
+                callControlId: call_control_id,
+                message: isNotSure
+                  ? 'AMD inconclusive — routing to operator.'
+                  : 'Human answered — routing to operator.',
               },
             });
 
+            // Play opener first, then auto-route
             try {
               await playOpener(call_control_id, session.campaignId, state);
             } catch (err: any) {
               fastify.log.error({ err, call_control_id }, 'Failed to play opener');
-              broadcast({
-                type: 'error',
-                data: { message: `Failed to play opener: ${err.message}` },
-              });
             }
+
+            // Auto-route to available operator
+            await dialerEngine.routeToOperator(call_control_id);
           }
           break;
         }
@@ -207,7 +213,6 @@ export const telnyxWebhookRoutes: FastifyPluginAsync = async (fastify) => {
               type: 'error',
               data: { message: `Failed to drop voicemail: ${err.message}` },
             });
-            // Hangup and move on since we can't drop the voicemail
             try {
               const provider = await getProvider();
               await provider.hangup(call_control_id);
@@ -223,7 +228,6 @@ export const telnyxWebhookRoutes: FastifyPluginAsync = async (fastify) => {
           const playbackContext = state.playbackType as string | undefined;
 
           if (playbackContext === 'voicemail') {
-            // Voicemail dropped — hangup and move on
             try {
               const provider = await getProvider();
               await provider.hangup(call_control_id);
@@ -232,16 +236,20 @@ export const telnyxWebhookRoutes: FastifyPluginAsync = async (fastify) => {
             }
             await dialerEngine.handleCallEnd(call_control_id, 'voicemail');
           } else if (playbackContext === 'opener') {
-            // Opener finished — wait for operator to jump in
-            updateSession({ currentCallState: 'human_answered' });
-            broadcast({
-              type: 'call_status_changed',
-              data: {
-                callState: 'human_answered',
-                contactId: session.currentContactId,
-                message: 'Opener finished — jump in now!',
-              },
-            });
+            // Opener finished — if not yet bridged, update state
+            const call = getInFlightCall(call_control_id);
+            if (call && call.callState !== 'operator_bridged') {
+              updateInFlightCall(call_control_id, { callState: 'human_answered' });
+              broadcast({
+                type: 'call_status_changed',
+                data: {
+                  callState: 'human_answered',
+                  contactId: call.contactId,
+                  callControlId: call_control_id,
+                  message: 'Opener finished — waiting for operator.',
+                },
+              });
+            }
           }
           break;
         }
@@ -252,7 +260,6 @@ export const telnyxWebhookRoutes: FastifyPluginAsync = async (fastify) => {
             | undefined;
 
           if (transcriptionData?.is_final && transcriptionData.transcript) {
-            // Find the call log for this call
             const callLog = await db
               .select()
               .from(callLogs)
@@ -271,7 +278,7 @@ export const telnyxWebhookRoutes: FastifyPluginAsync = async (fastify) => {
                 type: 'transcription',
                 data: {
                   callLogId: callLog.id,
-                  contactId: session.currentContactId,
+                  contactId: getInFlightCall(call_control_id)?.contactId,
                   transcript: transcriptionData.transcript,
                   confidence: transcriptionData.confidence,
                 },
@@ -282,12 +289,13 @@ export const telnyxWebhookRoutes: FastifyPluginAsync = async (fastify) => {
         }
 
         case 'call.hangup': {
-          clearAmdTimeout();
-          const currentState = session.currentCallState;
-          // Determine disposition based on state
+          clearAmdTimeout(call_control_id);
+          const call = getInFlightCall(call_control_id);
+          if (!call) break;
+
           let disposition = 'no_answer';
-          if (currentState === 'voicemail_dropping') disposition = 'voicemail';
-          else if (currentState === 'operator_bridged' || currentState === 'human_answered')
+          if (call.callState === 'voicemail_dropping') disposition = 'voicemail';
+          else if (call.callState === 'operator_bridged' || call.callState === 'human_answered')
             disposition = 'connected';
 
           await dialerEngine.handleCallEnd(call_control_id, disposition);
@@ -303,20 +311,32 @@ export const telnyxWebhookRoutes: FastifyPluginAsync = async (fastify) => {
       broadcast({ type: 'error', data: { message: err.message } });
     }
 
-    // Always respond 200 to Telnyx
     return reply.code(200).send({ received: true });
   });
 };
 
-async function playOpener(callControlId: string, campaignId: number, state: Record<string, unknown>) {
+async function playOpener(
+  callControlId: string,
+  campaignId: number,
+  state: Record<string, unknown>,
+) {
   const campaign = await db.select().from(campaigns).where(eq(campaigns.id, campaignId)).get();
   if (!campaign?.openerRecordingId) return;
 
-  const recording = await db
-    .select()
-    .from(recordings)
-    .where(eq(recordings.id, campaign.openerRecordingId))
-    .get();
+  // Check if the assigned operator has a profile override
+  const call = getInFlightCall(callControlId);
+  let recordingId = campaign.openerRecordingId;
+
+  if (call?.assignedOperatorId) {
+    const profile = await db
+      .select()
+      .from(recordings)
+      .where(eq(recordings.id, recordingId))
+      .get();
+    // TODO: check operator's active recording profile for override
+  }
+
+  const recording = await db.select().from(recordings).where(eq(recordings.id, recordingId)).get();
   if (!recording) return;
 
   const provider = await getProvider();
@@ -327,7 +347,11 @@ async function playOpener(callControlId: string, campaignId: number, state: Reco
   await provider.playAudio(callControlId, audioUrl, clientState);
 }
 
-async function playVoicemail(callControlId: string, campaignId: number, state: Record<string, unknown>) {
+async function playVoicemail(
+  callControlId: string,
+  campaignId: number,
+  state: Record<string, unknown>,
+) {
   const campaign = await db.select().from(campaigns).where(eq(campaigns.id, campaignId)).get();
   if (!campaign?.voicemailRecordingId) return;
 
