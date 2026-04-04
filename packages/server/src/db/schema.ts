@@ -34,6 +34,8 @@ export const campaigns = sqliteTable('campaigns', {
   transcriptionEngine: text('transcription_engine', {
     enum: ['telnyx', 'google', 'deepgram', 'azure'],
   }).default('telnyx'),
+  sttProvider: text('stt_provider'),
+  sttApiKey: text('stt_api_key'),
   status: text('status', { enum: ['draft', 'active', 'paused', 'completed'] })
     .notNull()
     .default('draft'),
@@ -76,6 +78,8 @@ export const contacts = sqliteTable('contacts', {
   })
     .notNull()
     .default('pending'),
+  hubspotContactId: text('hubspot_contact_id'),
+  apolloContactId: text('apollo_contact_id'),
   callCount: integer('call_count').notNull().default(0),
   lastCalledAt: text('last_called_at'),
   createdAt: text('created_at')

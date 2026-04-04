@@ -32,4 +32,12 @@ export class TwilioProvider implements TelephonyProvider {
   async stopTranscription(_callControlId: string): Promise<void> {
     throw new Error('Twilio provider not yet implemented');
   }
+
+  async startStreaming(_callControlId: string, _streamUrl: string): Promise<void> {
+    throw new Error('Twilio provider not yet implemented');
+  }
+
+  async stopStreaming(_callControlId: string): Promise<void> {
+    throw new Error('Twilio provider not yet implemented');
+  }
 }

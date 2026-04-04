@@ -15,6 +15,7 @@ import { analyticsRoutes } from './routes/analytics.js';
 import { transcriptRoutes } from './routes/transcripts.js';
 import { userRoutes } from './routes/users.js';
 import { recordingProfileRoutes } from './routes/recording-profiles.js';
+import { integrationRoutes } from './routes/integrations.js';
 import { sseHandler } from './ws/index.js';
 import { resolve, dirname } from 'node:path';
 import { existsSync, mkdirSync, readFileSync } from 'node:fs';
@@ -106,6 +107,7 @@ export async function buildApp() {
   await app.register(transcriptRoutes, { prefix: '/api/transcripts' });
   await app.register(userRoutes, { prefix: '/api/users' });
   await app.register(recordingProfileRoutes, { prefix: '/api/recording-profiles' });
+  await app.register(integrationRoutes, { prefix: '/api/integrations' });
 
   // Webhooks (no auth — verified by signature)
   await app.register(telnyxWebhookRoutes, { prefix: '/webhooks' });

@@ -683,13 +683,11 @@ CSV exports include all fields and are compatible with Excel, Google Sheets, Hub
 - [x] Telnyx webhook Ed25519 signature verification
 - [x] AMD error handling (`not_sure`, timeout fallback)
 - [x] [Call transcription — Telnyx built-in](docs/transcription.md) (real-time, 4 engines, per-campaign config)
-- [ ] [Call transcription — BYO STT via media streaming](docs/transcription.md)
-- [ ] Twilio as second provider
+- [ ] Call transcription — BYO STT via media streaming ([design doc](docs/transcription.md))
+- [ ] Twilio as second provider (interface stubbed, not implemented)
 - [ ] HubSpot contact import + activity sync
 - [ ] Apollo contact import
 - [ ] Call recording playback in-app
-- [ ] Multi-user support
-- [ ] Parallel dialing (multiple simultaneous calls)
 - [ ] Webhook endpoint for generic CRM push (Zapier/Make compatible)
 
 ---

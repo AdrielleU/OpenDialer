@@ -302,6 +302,17 @@ export const telnyxWebhookRoutes: FastifyPluginAsync = async (fastify) => {
           break;
         }
 
+        case 'call.recording.saved': {
+          const recordingUrl = (payload.recording_urls as any)?.mp3 || (payload.public_recording_urls as any)?.mp3;
+          if (recordingUrl) {
+            await db
+              .update(callLogs)
+              .set({ recordingUrl })
+              .where(eq(callLogs.telnyxCallControlId, call_control_id));
+          }
+          break;
+        }
+
         default: {
           fastify.log.info({ event_type }, 'Unhandled Telnyx event');
         }

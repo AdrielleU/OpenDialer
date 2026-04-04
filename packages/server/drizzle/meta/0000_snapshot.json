@@ -1,7 +1,7 @@
 {
   "version": "6",
   "dialect": "sqlite",
-  "id": "69f5cf6c-b236-4d37-a674-3849f04ea2d4",
+  "id": "c6f3cc98-d5ab-407b-9690-d9fc3f48eb0a",
   "prevId": "00000000-0000-0000-0000-000000000000",
   "tables": {
     "call_logs": {
@@ -200,6 +200,20 @@
           "autoincrement": false,
           "default": "'telnyx'"
         },
+        "stt_provider": {
+          "name": "stt_provider",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "stt_api_key": {
+          "name": "stt_api_key",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
         "status": {
           "name": "status",
           "type": "text",
@@ -315,6 +329,20 @@
           "notNull": true,
           "autoincrement": false,
           "default": "'pending'"
+        },
+        "hubspot_contact_id": {
+          "name": "hubspot_contact_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "apollo_contact_id": {
+          "name": "apollo_contact_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
         },
         "call_count": {
           "name": "call_count",

@@ -74,4 +74,15 @@ export class TelnyxProvider implements TelephonyProvider {
   async stopTranscription(callControlId: string): Promise<void> {
     await this.client.calls.actions.transcriptionStop(callControlId);
   }
+
+  async startStreaming(callControlId: string, streamUrl: string, track = 'both_tracks'): Promise<void> {
+    await this.client.calls.actions.streamingStart(callControlId, {
+      stream_url: streamUrl,
+      stream_track: track,
+    });
+  }
+
+  async stopStreaming(callControlId: string): Promise<void> {
+    await this.client.calls.actions.streamingStop(callControlId);
+  }
 }

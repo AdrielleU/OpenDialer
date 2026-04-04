@@ -1,6 +1,8 @@
 import { db } from '../db/index.js';
 import { contacts, campaigns, callLogs, recordings, recordingProfiles, settings } from '../db/schema.js';
 import { eq, and } from 'drizzle-orm';
+import { fireWebhook, buildCallWebhookData } from '../integrations/webhooks.js';
+import { logCallToHubspot } from '../integrations/hubspot.js';
 import {
   getTeamSession,
   updateTeamSession,
@@ -80,6 +82,14 @@ export const dialerEngine = {
       broadcast({
         type: 'session_status_changed',
         data: { status: 'completed', campaignId: session.campaignId },
+      });
+      fireWebhook('session.completed', {
+        campaign: { id: session.campaignId },
+        total_calls: session.callsMade,
+        voicemails_dropped: session.voicemailsDropped,
+        connects: session.connects,
+        started_at: session.sessionStartedAt,
+        ended_at: new Date().toISOString(),
       });
       return;
     }
@@ -245,24 +255,34 @@ export const dialerEngine = {
       .set({ operatorId: operator.userId, humanTookOver: true })
       .where(eq(callLogs.telnyxCallControlId, callControlId));
 
-    // Start transcription if enabled
+    // Auto-record and transcribe bridged calls
     try {
       const session = getTeamSession();
+      const provider = await getProvider();
+
+      // Always record bridged calls
+      await provider.startRecording(callControlId);
+
+      // Start transcription if enabled
       const campaign = await db
         .select()
         .from(campaigns)
         .where(eq(campaigns.id, session.campaignId))
         .get();
 
-      if (campaign?.enableTranscription) {
-        const provider = await getProvider();
+      if (campaign?.sttProvider && campaign?.sttApiKey) {
+        // BYO STT — stream audio to external provider via WebSocket relay
+        const streamUrl = `wss://${config.WEBHOOK_BASE_URL.replace(/^https?:\/\//, '')}/audio-stream`;
+        await provider.startStreaming(callControlId, streamUrl);
+      } else if (campaign?.enableTranscription) {
+        // Telnyx built-in transcription
         await provider.startTranscription(callControlId, {
           engine: (campaign.transcriptionEngine as any) || 'telnyx',
           tracks: 'both',
         });
       }
     } catch {
-      // Don't fail the bridge if transcription fails
+      // Don't fail the bridge if recording/transcription fails
     }
 
     return true;
@@ -307,6 +327,16 @@ export const dialerEngine = {
         // Ignore hangup errors
       }
     }
+
+    // Fire session.completed webhook
+    fireWebhook('session.completed', {
+      campaign: { id: session.campaignId },
+      total_calls: session.callsMade,
+      voicemails_dropped: session.voicemailsDropped,
+      connects: session.connects,
+      started_at: session.sessionStartedAt,
+      ended_at: new Date().toISOString(),
+    });
 
     resetTeamSession();
     broadcast({ type: 'session_status_changed', data: { status: 'stopped' } });
@@ -480,6 +510,22 @@ export const dialerEngine = {
       type: 'call_log_added',
       data: { callControlId, disposition, contactId: call.contactId },
     });
+
+    // Fire CRM webhook
+    const callLog = await db
+      .select()
+      .from(callLogs)
+      .where(eq(callLogs.telnyxCallControlId, callControlId))
+      .get();
+    if (callLog) {
+      const webhookData = await buildCallWebhookData(callLog.id);
+      if (webhookData) {
+        const event = disposition === 'voicemail' ? 'voicemail.dropped' : 'call.completed';
+        fireWebhook(event, webhookData);
+      }
+      // Sync to HubSpot if configured
+      logCallToHubspot(callLog.id).catch(() => {});
+    }
 
     // Auto-advance if running
     if (session.status === 'running') {
