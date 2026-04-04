@@ -13,6 +13,9 @@ const envSchema = z.object({
   TELNYX_PUBLIC_KEY: z.string().optional(),
   ADMIN_PASSWORD: z.string().optional(),
   ADMIN_MFA_SECRET: z.string().optional(),
+  DEFAULT_ADMIN_PASSWORD: z.string().optional(),
+  DEFAULT_ADMIN_EMAIL: z.string().default('admin@localhost'),
+  REQUIRE_MFA: z.coerce.boolean().default(true),
   WORKOS_API_KEY: z.string().optional(),
   WORKOS_CLIENT_ID: z.string().optional(),
 });

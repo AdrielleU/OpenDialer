@@ -7,6 +7,22 @@ export const settings = sqliteTable('settings', {
   value: text('value').notNull(),
 });
 
+// --- Users ---
+export const users = sqliteTable('users', {
+  id: integer('id').primaryKey({ autoIncrement: true }),
+  email: text('email').notNull().unique(),
+  name: text('name').notNull(),
+  passwordHash: text('password_hash').notNull(),
+  mfaSecret: text('mfa_secret'),
+  role: text('role', { enum: ['admin', 'operator'] }).notNull().default('operator'),
+  mustChangePassword: integer('must_change_password', { mode: 'boolean' }).notNull().default(true),
+  mustSetupMfa: integer('must_setup_mfa', { mode: 'boolean' }).notNull().default(true),
+  createdAt: text('created_at')
+    .notNull()
+    .$defaultFn(() => new Date().toISOString()),
+  lastLoginAt: text('last_login_at'),
+});
+
 // --- Campaigns ---
 export const campaigns = sqliteTable('campaigns', {
   id: integer('id').primaryKey({ autoIncrement: true }),
@@ -82,10 +98,43 @@ export const recordings = sqliteTable('recordings', {
   type: text('type', { enum: ['opener', 'voicemail'] }).notNull(),
   filePath: text('file_path').notNull(),
   durationSeconds: integer('duration_seconds'),
+  userId: integer('user_id').references(() => users.id),
   createdAt: text('created_at')
     .notNull()
     .$defaultFn(() => new Date().toISOString()),
 });
+
+// --- Recording Profiles ---
+export const recordingProfiles = sqliteTable('recording_profiles', {
+  id: integer('id').primaryKey({ autoIncrement: true }),
+  userId: integer('user_id')
+    .notNull()
+    .references(() => users.id, { onDelete: 'cascade' }),
+  name: text('name').notNull(),
+  openerRecordingId: integer('opener_recording_id').references(() => recordings.id),
+  voicemailRecordingId: integer('voicemail_recording_id').references(() => recordings.id),
+  isDefault: integer('is_default', { mode: 'boolean' }).notNull().default(false),
+  createdAt: text('created_at')
+    .notNull()
+    .$defaultFn(() => new Date().toISOString()),
+});
+
+export const recordingProfilesRelations = relations(recordingProfiles, ({ one }) => ({
+  user: one(users, {
+    fields: [recordingProfiles.userId],
+    references: [users.id],
+  }),
+  openerRecording: one(recordings, {
+    fields: [recordingProfiles.openerRecordingId],
+    references: [recordings.id],
+    relationName: 'profileOpener',
+  }),
+  voicemailRecording: one(recordings, {
+    fields: [recordingProfiles.voicemailRecordingId],
+    references: [recordings.id],
+    relationName: 'profileVoicemail',
+  }),
+}));
 
 // --- Call Logs ---
 export const callLogs = sqliteTable('call_logs', {
@@ -96,10 +145,12 @@ export const callLogs = sqliteTable('call_logs', {
   contactId: integer('contact_id')
     .notNull()
     .references(() => contacts.id),
+  operatorId: integer('operator_id').references(() => users.id),
   telnyxCallControlId: text('telnyx_call_control_id'),
   startedAt: text('started_at'),
   endedAt: text('ended_at'),
   durationSeconds: integer('duration_seconds'),
+  talkTimeSeconds: integer('talk_time_seconds'),
   disposition: text('disposition', {
     enum: ['voicemail', 'connected', 'no_answer', 'busy', 'failed'],
   }),
@@ -116,6 +167,10 @@ export const callLogsRelations = relations(callLogs, ({ one }) => ({
   contact: one(contacts, {
     fields: [callLogs.contactId],
     references: [contacts.id],
+  }),
+  operator: one(users, {
+    fields: [callLogs.operatorId],
+    references: [users.id],
   }),
 }));
 
@@ -141,12 +196,16 @@ export const transcriptsRelations = relations(transcripts, ({ one }) => ({
 }));
 
 // --- Inferred Types ---
+export type User = typeof users.$inferSelect;
+export type NewUser = typeof users.$inferInsert;
 export type Campaign = typeof campaigns.$inferSelect;
 export type NewCampaign = typeof campaigns.$inferInsert;
 export type Contact = typeof contacts.$inferSelect;
 export type NewContact = typeof contacts.$inferInsert;
 export type Recording = typeof recordings.$inferSelect;
 export type NewRecording = typeof recordings.$inferInsert;
+export type RecordingProfile = typeof recordingProfiles.$inferSelect;
+export type NewRecordingProfile = typeof recordingProfiles.$inferInsert;
 export type CallLog = typeof callLogs.$inferSelect;
 export type NewCallLog = typeof callLogs.$inferInsert;
 export type Transcript = typeof transcripts.$inferSelect;

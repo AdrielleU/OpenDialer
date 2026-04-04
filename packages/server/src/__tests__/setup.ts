@@ -13,14 +13,35 @@ process.env.PROVIDER = 'telnyx';
 
 export const TEST_SESSION_ID = 'test-session-id';
 export const SESSION_COOKIE_NAME = 'opendialer_session';
+export let TEST_USER_ID = 1;
 
 beforeAll(async () => {
   // Dynamic imports to ensure DATABASE_URL is already set
   const { migrate } = await import('../db/migrate.js');
   await migrate();
 
-  const { sessions } = await import('../routes/auth.js');
-  sessions.set(TEST_SESSION_ID, { createdAt: Date.now() });
+  // Create a test admin user
+  const { db } = await import('../db/index.js');
+  const { users } = await import('../db/schema.js');
+  const bcrypt = await import('bcryptjs');
+  const hash = await bcrypt.hash('testadmin123', 10);
+  const [user] = await db
+    .insert(users)
+    .values({
+      email: 'testadmin@test.com',
+      name: 'Test Admin',
+      passwordHash: hash,
+      role: 'admin',
+      mustChangePassword: false,
+      mustSetupMfa: false,
+    })
+    .returning();
+  TEST_USER_ID = user.id;
+
+  // Create test session with the real user
+  const { sessions, resetMultiUserCache } = await import('../routes/auth.js');
+  sessions.set(TEST_SESSION_ID, { userId: TEST_USER_ID, role: 'admin', createdAt: Date.now() });
+  resetMultiUserCache();
 });
 
 afterAll(async () => {

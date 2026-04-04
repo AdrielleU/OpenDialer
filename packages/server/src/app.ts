@@ -8,10 +8,13 @@ import { contactRoutes } from './routes/contacts.js';
 import { recordingRoutes } from './routes/recordings.js';
 import { settingRoutes } from './routes/settings.js';
 import { dialerRoutes } from './routes/dialer.js';
-import { authRoutes, isAuthenticated } from './routes/auth.js';
+import { authRoutes, isAuthenticated, isMultiUserMode, getSessionData } from './routes/auth.js';
+import { config } from './config.js';
 import { telnyxWebhookRoutes } from './webhooks/telnyx.js';
 import { analyticsRoutes } from './routes/analytics.js';
 import { transcriptRoutes } from './routes/transcripts.js';
+import { userRoutes } from './routes/users.js';
+import { recordingProfileRoutes } from './routes/recording-profiles.js';
 import { sseHandler } from './ws/index.js';
 import { resolve, dirname } from 'node:path';
 import { existsSync, mkdirSync, readFileSync } from 'node:fs';
@@ -52,6 +55,10 @@ export async function buildApp() {
   // Auth routes (unprotected)
   await app.register(authRoutes, { prefix: '/api/auth' });
 
+  // Decorate request with user context
+  app.decorateRequest('userId', 0);
+  app.decorateRequest('userRole', 'operator');
+
   // Auth middleware — protect /api/* (except /api/auth/*) and /events
   app.addHook('onRequest', async (request, reply) => {
     const url = request.url;
@@ -67,10 +74,26 @@ export async function buildApp() {
       return;
     }
 
-    // Require authentication for API and SSE
-    if (!isAuthenticated(request)) {
+    const multiUser = await isMultiUserMode();
+
+    if (!multiUser) {
+      // Legacy mode: no password = open access; password = need session
+      if (!config.ADMIN_PASSWORD) return;
+      if (!isAuthenticated(request)) {
+        return reply.code(401).send({ error: 'Unauthorized' });
+      }
+      (request as any).userId = 0;
+      (request as any).userRole = 'admin';
+      return;
+    }
+
+    // Multi-user mode
+    const session = getSessionData(request);
+    if (!session) {
       return reply.code(401).send({ error: 'Unauthorized' });
     }
+    (request as any).userId = session.userId;
+    (request as any).userRole = session.role;
   });
 
   // REST routes
@@ -81,6 +104,8 @@ export async function buildApp() {
   await app.register(dialerRoutes, { prefix: '/api/dialer' });
   await app.register(analyticsRoutes, { prefix: '/api/analytics' });
   await app.register(transcriptRoutes, { prefix: '/api/transcripts' });
+  await app.register(userRoutes, { prefix: '/api/users' });
+  await app.register(recordingProfileRoutes, { prefix: '/api/recording-profiles' });
 
   // Webhooks (no auth — verified by signature)
   await app.register(telnyxWebhookRoutes, { prefix: '/webhooks' });
