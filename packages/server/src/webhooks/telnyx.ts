@@ -8,6 +8,17 @@ import { campaigns, recordings } from '../db/schema.js';
 import { eq } from 'drizzle-orm';
 import { config } from '../config.js';
 
+// AMD timeout — if detection doesn't fire within 35s of call.answered, treat as human
+const AMD_TIMEOUT_MS = 35_000;
+let amdTimeoutHandle: ReturnType<typeof setTimeout> | null = null;
+
+function clearAmdTimeout() {
+  if (amdTimeoutHandle) {
+    clearTimeout(amdTimeoutHandle);
+    amdTimeoutHandle = null;
+  }
+}
+
 interface TelnyxEvent {
   data: {
     event_type: string;
@@ -61,11 +72,30 @@ export const telnyxWebhookRoutes: FastifyPluginAsync = async (fastify) => {
             type: 'call_status_changed',
             data: { callState: 'amd_detecting', contactId: session.currentContactId },
           });
+
+          // Safety timeout — if AMD detection never fires, treat as human
+          clearAmdTimeout();
+          amdTimeoutHandle = setTimeout(() => {
+            const currentSession = getSession();
+            if (currentSession.currentCallState === 'amd_detecting') {
+              fastify.log.warn({ call_control_id }, 'AMD timeout — no detection result received');
+              updateSession({ currentCallState: 'human_answered' });
+              broadcast({
+                type: 'call_status_changed',
+                data: {
+                  callState: 'human_answered',
+                  contactId: currentSession.currentContactId,
+                  message: 'AMD timed out — treating as human. Ready to jump in.',
+                },
+              });
+            }
+          }, AMD_TIMEOUT_MS);
           break;
         }
 
         case 'call.machine.detection.ended': {
           const result = payload.result;
+          clearAmdTimeout();
 
           if (result === 'machine') {
             // Wait for greeting to end (beep detection)
@@ -74,6 +104,28 @@ export const telnyxWebhookRoutes: FastifyPluginAsync = async (fastify) => {
               type: 'call_status_changed',
               data: { callState: 'voicemail_dropping', contactId: session.currentContactId },
             });
+          } else if (result === 'not_sure') {
+            // AMD couldn't determine — treat as human but warn the operator
+            fastify.log.warn({ call_control_id }, 'AMD returned not_sure — treating as human');
+            updateSession({ currentCallState: 'human_answered' });
+            broadcast({
+              type: 'call_status_changed',
+              data: {
+                callState: 'human_answered',
+                contactId: session.currentContactId,
+                message: 'AMD inconclusive — could be human or machine. Ready to jump in.',
+              },
+            });
+
+            try {
+              await playOpener(call_control_id, session.campaignId, state);
+            } catch (err: any) {
+              fastify.log.error({ err, call_control_id }, 'Failed to play opener after not_sure AMD');
+              broadcast({
+                type: 'error',
+                data: { message: `Failed to play opener: ${err.message}` },
+              });
+            }
           } else {
             // Human answered — play opener
             updateSession({ currentCallState: 'human_answered' });
@@ -86,15 +138,38 @@ export const telnyxWebhookRoutes: FastifyPluginAsync = async (fastify) => {
               },
             });
 
-            // Play opener recording if configured
-            await playOpener(call_control_id, session.campaignId, state);
+            try {
+              await playOpener(call_control_id, session.campaignId, state);
+            } catch (err: any) {
+              fastify.log.error({ err, call_control_id }, 'Failed to play opener');
+              broadcast({
+                type: 'error',
+                data: { message: `Failed to play opener: ${err.message}` },
+              });
+            }
           }
           break;
         }
 
         case 'call.machine.greeting.ended': {
           // Beep detected — drop voicemail
-          await playVoicemail(call_control_id, session.campaignId, state);
+          try {
+            await playVoicemail(call_control_id, session.campaignId, state);
+          } catch (err: any) {
+            fastify.log.error({ err, call_control_id }, 'Failed to play voicemail drop');
+            broadcast({
+              type: 'error',
+              data: { message: `Failed to drop voicemail: ${err.message}` },
+            });
+            // Hangup and move on since we can't drop the voicemail
+            try {
+              const provider = await getProvider();
+              await provider.hangup(call_control_id);
+            } catch {
+              // Call may have already ended
+            }
+            await dialerEngine.handleCallEnd(call_control_id, 'no_answer');
+          }
           break;
         }
 
@@ -126,6 +201,7 @@ export const telnyxWebhookRoutes: FastifyPluginAsync = async (fastify) => {
         }
 
         case 'call.hangup': {
+          clearAmdTimeout();
           const currentState = session.currentCallState;
           // Determine disposition based on state
           let disposition = 'no_answer';

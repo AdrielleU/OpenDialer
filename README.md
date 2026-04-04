@@ -229,6 +229,77 @@ pnpm dev
 
 ---
 
+## 📖 User Guide — Your First Calling Session
+
+Once OpenDialer is running, follow these steps to make your first calls.
+
+### Step 1: Configure Telnyx Credentials
+
+1. Go to the **Settings** page in the app
+2. Enter your **Telnyx API Key** (starts with `KEY_`)
+3. Enter your **SIP Connection ID** — create one at [portal.telnyx.com → SIP Connections](https://portal.telnyx.com/#/app/connections)
+   - Make sure **WebRTC** is enabled on the connection (needed for "Jump In")
+4. Enter your **Phone Number** in E.164 format (e.g., `+15551234567`) — purchase one from the [Telnyx Number Portal](https://portal.telnyx.com/#/app/numbers/search-numbers)
+5. Enter your **Webhook Base URL** — the public URL where Telnyx can reach your server (see [webhooks setup](#3-public-url-for-webhooks) above)
+6. Click **Save** and use the **Test Connection** button to verify
+
+### Step 2: Upload Recordings
+
+1. Go to the **Recordings** page
+2. Upload an **Opener recording** (MP3 or WAV) — this plays when a human picks up, before you jump in. Example: *"Hi, this is Sarah from Acme Corp — hold on one moment..."*
+3. Upload a **Voicemail drop recording** — this plays automatically after the voicemail beep. Example: *"Hey, it's Sarah from Acme. I was calling about... give me a ring back at..."*
+4. You can upload multiple recordings and assign different ones per campaign
+
+### Step 3: Create a Campaign
+
+1. Go to the **Campaigns** page and click **Create Campaign**
+2. Give it a name (e.g., "Q2 Outbound — West Coast")
+3. Set the **Caller ID** — the phone number contacts will see (must be your Telnyx number or a verified number)
+4. Select your **Opener recording** and **Voicemail drop recording** from the dropdowns
+5. Save the campaign
+
+### Step 4: Import Contacts
+
+1. Go to the **Contacts** page
+2. Select your campaign, then either:
+   - **Add manually** — enter name, phone (E.164), company, email, notes
+   - **Bulk import via CSV** — upload a CSV with columns: `name`, `phone`, `company`, `email`, `notes`. Phone numbers must be in E.164 format (`+1XXXXXXXXXX`)
+3. Contacts start with status **Pending** and move through the dialer queue
+
+### Step 5: Start Dialing
+
+1. Go to the **Dialer** page — this is your main workspace
+2. **Put on your headset** — your browser will use WebRTC for audio
+3. Select your campaign from the dropdown and click **Start Calling**
+4. The dialer auto-advances through your contact list:
+
+| What you see | What's happening | What to do |
+|-------------|------------------|------------|
+| **Dialing...** | Call is being placed | Wait |
+| **Detecting...** | AMD is analyzing the pickup | Wait |
+| **Dropping Voicemail** | Machine detected, waiting for beep → auto-drops voicemail → auto-hangs up → auto-dials next | Nothing — fully automatic |
+| **Human Answered!** | A live person picked up, opener is playing | Get ready, then click **Jump In** |
+| **You are LIVE** | Your mic is bridged into the call | Talk! |
+| **AMD inconclusive** | Detection couldn't determine human vs. machine | Click **Jump In** to be safe, or **Skip** |
+| **AMD timed out** | Detection took too long (>35s) | Click **Jump In** or **Skip** |
+
+5. Use **Pause** to stop auto-advancing (current call continues), **Resume** to restart, **Stop** to end the session
+6. Use **Skip** to hang up the current call and move to the next contact
+
+### Step 6: Review Results
+
+1. Go to the **Analytics** page to see campaign stats: total calls, connect rate, voicemails dropped
+2. Use **Export CSV** to download contacts, call logs, or a campaign summary for your CRM
+
+### How Calls Work Under the Hood
+
+- **Outbound calls** are placed via Telnyx's REST Call Control API — your server controls the call
+- **Your audio** (when you Jump In) goes through WebRTC in your browser via the `@telnyx/webrtc` SDK
+- **Bridging** connects the two call legs together so you and the contact can hear each other
+- **State is in-memory** — if the server restarts during a session, active calls are orphaned. The contact list and logs are persisted in SQLite
+
+---
+
 ## 🏗️ Architecture
 
 ```

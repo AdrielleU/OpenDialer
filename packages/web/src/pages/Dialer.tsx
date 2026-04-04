@@ -152,7 +152,11 @@ export default function Dialer() {
               </div>
 
               {ws.message && (
-                <div className="text-emerald-400 font-medium">{ws.message}</div>
+                <div className={`font-medium ${
+                  ws.message.includes('inconclusive') || ws.message.includes('timed out')
+                    ? 'text-yellow-400'
+                    : 'text-emerald-400'
+                }`}>{ws.message}</div>
               )}
 
               {/* Action buttons */}
