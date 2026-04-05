@@ -11,13 +11,12 @@ const envSchema = z.object({
   TELNYX_CONNECTION_ID: z.string().optional(),
   TELNYX_PHONE_NUMBER: z.string().optional(),
   TELNYX_PUBLIC_KEY: z.string().optional(),
-  ADMIN_PASSWORD: z.string().optional(),
-  ADMIN_MFA_SECRET: z.string().optional(),
   DEFAULT_ADMIN_PASSWORD: z.string().optional(),
   DEFAULT_ADMIN_EMAIL: z.string().default('admin@localhost'),
-  REQUIRE_MFA: z.coerce.boolean().default(true),
+  REQUIRE_MFA: z.string().default('false').transform((v) => v === 'true' || v === '1'),
   WORKOS_API_KEY: z.string().optional(),
   WORKOS_CLIENT_ID: z.string().optional(),
+  TRANSCRIPT_RETENTION_DAYS: z.coerce.number().default(30),
 });
 
 export const config = envSchema.parse(process.env);

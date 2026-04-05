@@ -39,9 +39,8 @@ beforeAll(async () => {
   TEST_USER_ID = user.id;
 
   // Create test session with the real user
-  const { sessions, resetMultiUserCache } = await import('../routes/auth.js');
+  const { sessions } = await import('../routes/auth.js');
   sessions.set(TEST_SESSION_ID, { userId: TEST_USER_ID, role: 'admin', createdAt: Date.now() });
-  resetMultiUserCache();
 });
 
 afterAll(async () => {

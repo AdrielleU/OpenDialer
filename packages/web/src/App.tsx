@@ -33,7 +33,6 @@ export default function App() {
       .then((res) => {
         if (res.loggedIn && res.user) {
           if (res.user.mustChangePassword || res.user.mustSetupMfa) {
-            // Need setup — show login for wizard
             setAuthenticated(false);
           } else {
             setUser({
@@ -44,9 +43,6 @@ export default function App() {
             });
             setAuthenticated(true);
           }
-        } else if (res.loggedIn && res.mode === 'legacy') {
-          setUser({ userId: 0, name: 'Admin', email: '', role: 'admin' });
-          setAuthenticated(true);
         } else {
           setAuthenticated(false);
         }
@@ -64,8 +60,6 @@ export default function App() {
           email: res.user.email,
           role: res.user.role,
         });
-      } else {
-        setUser({ userId: 0, name: 'Admin', email: '', role: 'admin' });
       }
       setAuthenticated(true);
     });

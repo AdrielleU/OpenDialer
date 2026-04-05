@@ -8,8 +8,7 @@ export async function seedDefaultAdmin() {
   const existingUsers = await db.select().from(users).limit(1);
   if (existingUsers.length > 0) return;
 
-  // Use DEFAULT_ADMIN_PASSWORD or fall back to legacy ADMIN_PASSWORD
-  const defaultPassword = config.DEFAULT_ADMIN_PASSWORD || config.ADMIN_PASSWORD;
+  const defaultPassword = config.DEFAULT_ADMIN_PASSWORD;
   if (!defaultPassword) return;
 
   const email = config.DEFAULT_ADMIN_EMAIL || 'admin@localhost';

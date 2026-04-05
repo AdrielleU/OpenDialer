@@ -38,7 +38,7 @@ export const sseHandler: FastifyPluginAsync = async (fastify) => {
 
     // Extract userId from session
     const session = getSessionData(request);
-    const userId = session?.userId ?? 0;
+    const userId = session?.userId ?? -1;
 
     registerClient(userId, reply);
 

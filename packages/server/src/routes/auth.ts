@@ -1,4 +1,5 @@
 import type { FastifyPluginAsync, FastifyRequest } from 'fastify';
+import rateLimit from '@fastify/rate-limit';
 import { db } from '../db/index.js';
 import { users } from '../db/schema.js';
 import { eq } from 'drizzle-orm';
@@ -48,36 +49,30 @@ export function getSessionData(request: FastifyRequest): SessionData | null {
 }
 
 export function isAuthenticated(request: FastifyRequest): boolean {
-  // Legacy mode: no users in DB + ADMIN_PASSWORD set → use old env password
-  // This is checked at request time via the middleware, not here
-  // If we're in multi-user mode, check session
-  const session = getSessionData(request);
-  return session !== null;
-}
-
-// Check if the system is in legacy (env password) mode or multi-user mode
-let _isMultiUser: boolean | null = null;
-export async function isMultiUserMode(): Promise<boolean> {
-  if (_isMultiUser !== null) return _isMultiUser;
-  const existing = await db.select().from(users).limit(1);
-  _isMultiUser = existing.length > 0;
-  return _isMultiUser;
-}
-export function resetMultiUserCache() {
-  _isMultiUser = null;
+  return getSessionData(request) !== null;
 }
 
 export const authRoutes: FastifyPluginAsync = async (fastify) => {
+  // Rate limit login endpoints: 5 attempts per 30 seconds per IP
+  await fastify.register(rateLimit, {
+    max: 5,
+    timeWindow: 30_000,
+    keyGenerator: (request) => request.ip,
+    errorResponseBuilder: () => ({
+      statusCode: 429,
+      error: 'Too Many Requests',
+      message: 'Too many login attempts. Try again in 30 seconds.',
+    }),
+  });
+
   // Auth status
-  fastify.get('/status', async (request) => {
-    const multiUser = await isMultiUserMode();
+  fastify.get('/status', { config: { rateLimit: false } }, async (request) => {
     const session = getSessionData(request);
     const hasWorkos = !!config.WORKOS_API_KEY && !!config.WORKOS_CLIENT_ID;
 
-    if (multiUser && session) {
+    if (session) {
       const user = await db.select().from(users).where(eq(users.id, session.userId)).get();
       return {
-        mode: 'multi-user',
         loggedIn: true,
         hasWorkos,
         user: user
@@ -93,39 +88,11 @@ export const authRoutes: FastifyPluginAsync = async (fastify) => {
       };
     }
 
-    if (multiUser) {
-      return { mode: 'multi-user', loggedIn: false, hasWorkos };
-    }
-
-    // Legacy mode
-    const hasPassword = !!config.ADMIN_PASSWORD;
-    const legacyLoggedIn =
-      !hasPassword || (request.cookies?.[SESSION_COOKIE] && sessions.has(request.cookies[SESSION_COOKIE]!));
-
-    return { mode: 'legacy', loggedIn: !!legacyLoggedIn, hasPassword, hasWorkos };
+    return { loggedIn: false, hasWorkos };
   });
 
-  // Multi-user login: email + password
+  // Login: email + password
   fastify.post<{ Body: { email: string; password: string } }>('/login', async (request, reply) => {
-    const multiUser = await isMultiUserMode();
-
-    if (!multiUser) {
-      // Legacy mode: single password from env
-      if (!config.ADMIN_PASSWORD) {
-        return reply.code(400).send({ error: 'No password configured.' });
-      }
-      const { password } = request.body as { password: string };
-      if (password !== config.ADMIN_PASSWORD) {
-        return reply.code(401).send({ error: 'Invalid password.' });
-      }
-      if (config.ADMIN_MFA_SECRET) {
-        return { requireMfa: true };
-      }
-      createSession(reply, 0, 'admin'); // userId 0 for legacy
-      return { requireMfa: false, message: 'Logged in.' };
-    }
-
-    // Multi-user mode
     const { email, password } = request.body as { email: string; password: string };
     if (!email || !password) {
       return reply.code(400).send({ error: 'Email and password required.' });
@@ -143,7 +110,6 @@ export const authRoutes: FastifyPluginAsync = async (fastify) => {
 
     // Check if first-login setup is needed
     if (user.mustChangePassword) {
-      // Temporary session for password change only
       createSession(reply, user.id, user.role as 'admin' | 'operator');
       return { requirePasswordChange: true };
     }
@@ -167,21 +133,6 @@ export const authRoutes: FastifyPluginAsync = async (fastify) => {
   fastify.post<{ Body: { email: string; password: string; code: string } }>(
     '/login/mfa',
     async (request, reply) => {
-      const multiUser = await isMultiUserMode();
-
-      if (!multiUser) {
-        // Legacy MFA
-        const { password, code } = request.body as { password: string; code: string };
-        if (password !== config.ADMIN_PASSWORD || !config.ADMIN_MFA_SECRET) {
-          return reply.code(401).send({ error: 'Invalid credentials.' });
-        }
-        if (!verifySync({ token: code, secret: config.ADMIN_MFA_SECRET })) {
-          return reply.code(401).send({ error: 'Invalid MFA code.' });
-        }
-        createSession(reply, 0, 'admin');
-        return { message: 'Logged in.' };
-      }
-
       const { email, password, code } = request.body as {
         email: string;
         password: string;
@@ -209,9 +160,10 @@ export const authRoutes: FastifyPluginAsync = async (fastify) => {
   // Change password (first-login or voluntary)
   fastify.post<{ Body: { currentPassword: string; newPassword: string } }>(
     '/change-password',
+    { config: { rateLimit: false } },
     async (request, reply) => {
       const session = getSessionData(request);
-      if (!session || session.userId === 0) {
+      if (!session) {
         return reply.code(401).send({ error: 'Not authenticated.' });
       }
 
@@ -241,9 +193,9 @@ export const authRoutes: FastifyPluginAsync = async (fastify) => {
   );
 
   // MFA setup — generate QR code
-  fastify.get('/mfa-setup', async (request, reply) => {
+  fastify.get('/mfa-setup', { config: { rateLimit: false } }, async (request, reply) => {
     const session = getSessionData(request);
-    if (!session || session.userId === 0) {
+    if (!session) {
       return reply.code(401).send({ error: 'Not authenticated.' });
     }
 
@@ -252,7 +204,6 @@ export const authRoutes: FastifyPluginAsync = async (fastify) => {
 
     const secret = user.mfaSecret || generateSecret();
 
-    // Temporarily store the secret if not yet saved
     if (!user.mfaSecret) {
       await db.update(users).set({ mfaSecret: secret }).where(eq(users.id, session.userId));
     }
@@ -264,32 +215,36 @@ export const authRoutes: FastifyPluginAsync = async (fastify) => {
   });
 
   // MFA setup — verify code
-  fastify.post<{ Body: { code: string } }>('/verify-mfa', async (request, reply) => {
-    const session = getSessionData(request);
-    if (!session || session.userId === 0) {
-      return reply.code(401).send({ error: 'Not authenticated.' });
-    }
+  fastify.post<{ Body: { code: string } }>(
+    '/verify-mfa',
+    { config: { rateLimit: false } },
+    async (request, reply) => {
+      const session = getSessionData(request);
+      if (!session) {
+        return reply.code(401).send({ error: 'Not authenticated.' });
+      }
 
-    const user = await db.select().from(users).where(eq(users.id, session.userId)).get();
-    if (!user || !user.mfaSecret) {
-      return reply.code(400).send({ error: 'MFA not configured. Run setup first.' });
-    }
+      const user = await db.select().from(users).where(eq(users.id, session.userId)).get();
+      if (!user || !user.mfaSecret) {
+        return reply.code(400).send({ error: 'MFA not configured. Run setup first.' });
+      }
 
-    const { code } = request.body as { code: string };
-    if (!verifySync({ token: code, secret: user.mfaSecret })) {
-      return reply.code(401).send({ error: 'Invalid code. Try again.' });
-    }
+      const { code } = request.body as { code: string };
+      if (!verifySync({ token: code, secret: user.mfaSecret })) {
+        return reply.code(401).send({ error: 'Invalid code. Try again.' });
+      }
 
-    await db
-      .update(users)
-      .set({ mustSetupMfa: false })
-      .where(eq(users.id, session.userId));
+      await db
+        .update(users)
+        .set({ mustSetupMfa: false })
+        .where(eq(users.id, session.userId));
 
-    return { message: 'MFA verified and enabled.' };
-  });
+      return { message: 'MFA verified and enabled.' };
+    },
+  );
 
   // WorkOS SSO
-  fastify.get('/workos', async (_request, reply) => {
+  fastify.get('/workos', { config: { rateLimit: false } }, async (_request, reply) => {
     if (!config.WORKOS_API_KEY || !config.WORKOS_CLIENT_ID) {
       return reply.code(400).send({ error: 'WorkOS not configured.' });
     }
@@ -304,55 +259,58 @@ export const authRoutes: FastifyPluginAsync = async (fastify) => {
     return reply.redirect(authorizationUrl);
   });
 
-  fastify.get<{ Querystring: { code?: string } }>('/workos/callback', async (request, reply) => {
-    if (!config.WORKOS_API_KEY || !config.WORKOS_CLIENT_ID) {
-      return reply.code(400).send({ error: 'WorkOS not configured.' });
-    }
-    const { code } = request.query;
-    if (!code) return reply.code(400).send({ error: 'Missing authorization code.' });
-
-    try {
-      const { WorkOS } = await import('@workos-inc/node');
-      const workos = new WorkOS(config.WORKOS_API_KEY);
-      const { user: workosUser } = await workos.userManagement.authenticateWithCode({
-        code,
-        clientId: config.WORKOS_CLIENT_ID,
-      });
-
-      // Find or create user by email
-      let user = await db
-        .select()
-        .from(users)
-        .where(eq(users.email, workosUser.email))
-        .get();
-
-      if (!user) {
-        const [newUser] = await db
-          .insert(users)
-          .values({
-            email: workosUser.email,
-            name: workosUser.firstName
-              ? `${workosUser.firstName} ${workosUser.lastName || ''}`.trim()
-              : workosUser.email,
-            passwordHash: await bcrypt.hash(randomBytes(32).toString('hex'), 12),
-            role: 'operator',
-            mustChangePassword: false,
-            mustSetupMfa: false,
-          })
-          .returning();
-        user = newUser;
-        resetMultiUserCache();
+  fastify.get<{ Querystring: { code?: string } }>(
+    '/workos/callback',
+    { config: { rateLimit: false } },
+    async (request, reply) => {
+      if (!config.WORKOS_API_KEY || !config.WORKOS_CLIENT_ID) {
+        return reply.code(400).send({ error: 'WorkOS not configured.' });
       }
+      const { code } = request.query;
+      if (!code) return reply.code(400).send({ error: 'Missing authorization code.' });
 
-      createSession(reply, user.id, user.role as 'admin' | 'operator');
-      return reply.redirect('/');
-    } catch (err: any) {
-      return reply.code(401).send({ error: 'WorkOS auth failed: ' + err.message });
-    }
-  });
+      try {
+        const { WorkOS } = await import('@workos-inc/node');
+        const workos = new WorkOS(config.WORKOS_API_KEY);
+        const { user: workosUser } = await workos.userManagement.authenticateWithCode({
+          code,
+          clientId: config.WORKOS_CLIENT_ID,
+        });
+
+        // Find or create user by email
+        let user = await db
+          .select()
+          .from(users)
+          .where(eq(users.email, workosUser.email))
+          .get();
+
+        if (!user) {
+          const [newUser] = await db
+            .insert(users)
+            .values({
+              email: workosUser.email,
+              name: workosUser.firstName
+                ? `${workosUser.firstName} ${workosUser.lastName || ''}`.trim()
+                : workosUser.email,
+              passwordHash: await bcrypt.hash(randomBytes(32).toString('hex'), 12),
+              role: 'operator',
+              mustChangePassword: false,
+              mustSetupMfa: false,
+            })
+            .returning();
+          user = newUser;
+        }
+
+        createSession(reply, user.id, user.role as 'admin' | 'operator');
+        return reply.redirect('/');
+      } catch (err: any) {
+        return reply.code(401).send({ error: 'WorkOS auth failed: ' + err.message });
+      }
+    },
+  );
 
   // Logout
-  fastify.post('/logout', async (request, reply) => {
+  fastify.post('/logout', { config: { rateLimit: false } }, async (request, reply) => {
     const sessionId = request.cookies?.[SESSION_COOKIE];
     if (sessionId) sessions.delete(sessionId);
     reply.clearCookie(SESSION_COOKIE, { path: '/' });

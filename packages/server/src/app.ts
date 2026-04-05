@@ -8,8 +8,7 @@ import { contactRoutes } from './routes/contacts.js';
 import { recordingRoutes } from './routes/recordings.js';
 import { settingRoutes } from './routes/settings.js';
 import { dialerRoutes } from './routes/dialer.js';
-import { authRoutes, isAuthenticated, isMultiUserMode, getSessionData } from './routes/auth.js';
-import { config } from './config.js';
+import { authRoutes, getSessionData } from './routes/auth.js';
 import { telnyxWebhookRoutes } from './webhooks/telnyx.js';
 import { analyticsRoutes } from './routes/analytics.js';
 import { transcriptRoutes } from './routes/transcripts.js';
@@ -75,20 +74,6 @@ export async function buildApp() {
       return;
     }
 
-    const multiUser = await isMultiUserMode();
-
-    if (!multiUser) {
-      // Legacy mode: no password = open access; password = need session
-      if (!config.ADMIN_PASSWORD) return;
-      if (!isAuthenticated(request)) {
-        return reply.code(401).send({ error: 'Unauthorized' });
-      }
-      (request as any).userId = 0;
-      (request as any).userRole = 'admin';
-      return;
-    }
-
-    // Multi-user mode
     const session = getSessionData(request);
     if (!session) {
       return reply.code(401).send({ error: 'Unauthorized' });

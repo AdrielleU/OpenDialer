@@ -1,6 +1,5 @@
 import type { FastifyPluginAsync } from 'fastify';
 import { testHubspotConnection, importHubspotContacts, logCallToHubspot } from '../integrations/hubspot.js';
-import { testApolloConnection, importApolloContacts } from '../integrations/apollo.js';
 import { fireWebhook } from '../integrations/webhooks.js';
 import { db } from '../db/index.js';
 import { settings } from '../db/schema.js';
@@ -39,31 +38,6 @@ export const integrationRoutes: FastifyPluginAsync = async (fastify) => {
       return reply.code(400).send({ error: err.message });
     }
   });
-
-  // --- Apollo ---
-
-  fastify.get('/apollo/test', async () => {
-    return testApolloConnection();
-  });
-
-  fastify.post<{ Body: { campaignId: number; query?: string; limit?: number } }>(
-    '/apollo/import',
-    async (request, reply) => {
-      const { campaignId, query, limit } = request.body as {
-        campaignId: number;
-        query?: string;
-        limit?: number;
-      };
-      if (!campaignId) return reply.code(400).send({ error: 'campaignId required.' });
-
-      try {
-        const result = await importApolloContacts(campaignId, { query, limit });
-        return result;
-      } catch (err: any) {
-        return reply.code(400).send({ error: err.message });
-      }
-    },
-  );
 
   // --- Webhook Test ---
 

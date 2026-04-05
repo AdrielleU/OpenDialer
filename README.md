@@ -39,7 +39,8 @@ OpenDialer is a **browser-based power dialer** you self-host on your own infrast
 - 🎙️ **Per-operator recording profiles** — each team member has their own opener & voicemail recordings
 - 🎧 **Auto-bridge via WebRTC** — operators are connected into live calls automatically
 - ⏭️ **Auto-advance through contact lists** — voicemails are fully automatic
-- 🔐 **Auth with MFA** — multi-user login, forced password change + TOTP on first login, admin/operator roles
+- 🔐 **Auth with optional MFA** — multi-user login, forced password change on first login, optional TOTP MFA, rate-limited login
+- 🎫 **Per-operator WebRTC credentials** — each operator gets their own Telnyx SIP identity, auto-provisioned
 - 📊 **Analytics & CSV export** — per-campaign and per-operator stats
 
 ### 💰 Why?
@@ -104,12 +105,13 @@ Two paths for transcribing calls — see [docs/transcription.md](docs/transcript
 
 ### Authentication & Security
 - **Multi-user auth** — email + password login with bcrypt hashing, admin and operator roles
-- **Forced MFA** — TOTP two-factor authentication required on first login (Google Authenticator, Authy, 1Password, etc.)
-- **First-login setup** — temporary password from admin → forced change + MFA setup on first login
+- **Optional MFA** — TOTP two-factor authentication on first login (Google Authenticator, Authy, 1Password, etc.) — controlled via `REQUIRE_MFA` (default: off)
+- **Rate limiting** — login endpoints rate-limited to 5 attempts per 30 seconds via `@fastify/rate-limit`
+- **First-login setup** — temporary password from admin → forced change on first login
 - **WorkOS SSO** — optional Google, GitHub, or SAML login via WorkOS
 - **Session-based** — 24-hour session cookie, sign out anytime from the sidebar
 - **Webhook verification** — Telnyx Ed25519 signature verification on incoming webhooks (optional, enable via `TELNYX_PUBLIC_KEY`)
-- **Legacy mode** — single-password login from `.env` still works for solo self-hosters
+- **Per-operator SIP credentials** — each operator gets their own Telnyx Telephony Credential, auto-provisioned on user creation
 
 ### ⚙️ Settings
 - Enter your Telnyx API key, Connection ID, and phone number
@@ -325,11 +327,10 @@ On first launch, OpenDialer creates a default admin from your `DEFAULT_ADMIN_PAS
 
 1. **Login** with your email and the default password
 2. **Change your password** (forced on first login)
-3. **Set up MFA** — scan the QR code with your authenticator app (Google Authenticator, Authy, 1Password)
-4. **Enter the 6-digit code** to verify
-5. You're in! Go to the **Team** page to invite operators
+3. If `REQUIRE_MFA=true`, **set up MFA** — scan the QR code with your authenticator app
+4. You're in! Go to the **Team** page to invite operators
 
-On future visits, sign in with your email + password + authenticator code.
+On future visits, sign in with your email + password (+ MFA code if enabled).
 
 ### Step 1: Configure Telnyx Credentials
 
@@ -456,7 +457,7 @@ If only one operator is in the session, it behaves like a traditional power dial
 | Frontend | React 19 + TypeScript + Tailwind CSS 4 | Modern, fast, great DX |
 | Backend | Fastify 5 + TypeScript | Fastest Node.js framework, great TS support |
 | Database | SQLite or remote libSQL via Drizzle ORM (8 tables) | Local file or external DB — set via env var |
-| Auth | bcrypt + TOTP (otplib) + optional WorkOS SSO | Multi-user with roles, forced MFA |
+| Auth | bcrypt + TOTP (otplib) + @fastify/rate-limit + optional WorkOS SSO | Multi-user with roles, optional MFA, rate-limited |
 | Telephony | Telnyx Call Control API | Best price/performance for voice, excellent AMD |
 | Browser Audio | @telnyx/webrtc SDK | WebRTC softphone in the browser |
 | Real-time | Server-Sent Events (SSE) | Simpler than WebSocket, auto-reconnect, HTTP-native |
@@ -519,9 +520,13 @@ opendialer/
 │       │   │   ├── Team.tsx     # Admin user management (invite, roles, reset pw)
 │       │   │   ├── Analytics.tsx# Stats dashboard + CSV export
 │       │   │   └── Settings.tsx # API key configuration
+│       │   ├── components/
+│       │   │   ├── Layout.tsx       # Sidebar nav with role-based items
+│       │   │   ├── OperatorStatusPanel.tsx # Live operator status (admin view)
+│       │   │   └── IncomingCallCard.tsx    # Incoming call notification (operator view)
 │       │   ├── hooks/
-│       │   │   ├── useWebSocket.ts  # SSE hook (EventSource)
-│       │   │   └── useTelnyxClient.ts # WebRTC SDK hook
+│       │   │   ├── useWebSocket.ts  # SSE hook (EventSource) — tracks operators, routed calls
+│       │   │   └── useTelnyxClient.ts # WebRTC SDK hook with per-operator credentials
 │       │   └── lib/
 │       │       └── api.ts       # Typed API client
 │       └── nginx.conf           # Production reverse proxy
@@ -534,7 +539,7 @@ opendialer/
 | Table | Purpose | Key Fields |
 |-------|---------|------------|
 | `settings` | Key-value config store | API keys, webhook URL, provider |
-| `users` | Team members | email, name, passwordHash, mfaSecret, role, mustChangePassword |
+| `users` | Team members | email, name, passwordHash, mfaSecret, role, sipUsername, sipPassword |
 | `campaigns` | Calling campaigns | name, caller ID, recording IDs, transcription config, status |
 | `contacts` | Contact lists per campaign | name, phone (E.164), company, status |
 | `recordings` | Uploaded audio files | name, type (opener/voicemail), file path, userId |
@@ -585,6 +590,7 @@ opendialer/
 | `POST` | `/api/dialer/jump-in` | Manual bridge into call |
 | `POST` | `/api/dialer/skip` | Skip/hangup a call |
 | `GET` | `/api/dialer/status` | Team session status (operators, in-flight calls) |
+| `GET` | `/api/dialer/webrtc-credentials` | Get operator's SIP credentials for WebRTC |
 | | **Analytics & Export** | |
 | `GET` | `/api/analytics/campaigns/:id/stats` | Campaign statistics |
 | `GET` | `/api/analytics/campaigns/:id/export/contacts` | Export contacts CSV |
@@ -686,7 +692,6 @@ CSV exports include all fields and are compatible with Excel, Google Sheets, Hub
 - [ ] Call transcription — BYO STT via media streaming ([design doc](docs/transcription.md))
 - [ ] Twilio as second provider (interface stubbed, not implemented)
 - [ ] HubSpot contact import + activity sync
-- [ ] Apollo contact import
 - [ ] Call recording playback in-app
 - [ ] Webhook endpoint for generic CRM push (Zapier/Make compatible)
 

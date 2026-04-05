@@ -235,6 +235,36 @@
           "primaryKey": false,
           "notNull": true,
           "autoincrement": false
+        },
+        "drop_if_no_operator": {
+          "name": "drop_if_no_operator",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": true
+        },
+        "ivr_sequence": {
+          "name": "ivr_sequence",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "ivr_greeting_type": {
+          "name": "ivr_greeting_type",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false,
+          "default": "'none'"
+        },
+        "ivr_greeting_template": {
+          "name": "ivr_greeting_template",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
         }
       },
       "indexes": {},
@@ -337,13 +367,6 @@
           "notNull": false,
           "autoincrement": false
         },
-        "apollo_contact_id": {
-          "name": "apollo_contact_id",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false,
-          "autoincrement": false
-        },
         "call_count": {
           "name": "call_count",
           "type": "integer",
@@ -364,6 +387,13 @@
           "type": "text",
           "primaryKey": false,
           "notNull": true,
+          "autoincrement": false
+        },
+        "ivr_sequence": {
+          "name": "ivr_sequence",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
           "autoincrement": false
         }
       },
@@ -721,6 +751,27 @@
         },
         "last_login_at": {
           "name": "last_login_at",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "sip_username": {
+          "name": "sip_username",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "sip_password": {
+          "name": "sip_password",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "telnyx_credential_id": {
+          "name": "telnyx_credential_id",
           "type": "text",
           "primaryKey": false,
           "notNull": false,

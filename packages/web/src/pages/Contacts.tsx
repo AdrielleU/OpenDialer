@@ -1,7 +1,8 @@
 import { useState, useEffect, useRef } from 'react';
 import { api } from '../lib/api';
 import type { Campaign, Contact } from '../types';
-import { Upload, Plus, Trash2, X } from 'lucide-react';
+import { Upload, Plus, Trash2, X, Phone } from 'lucide-react';
+import IvrBuilder from '../components/IvrBuilder';
 import Papa from 'papaparse';
 
 export default function Contacts() {
@@ -10,7 +11,7 @@ export default function Contacts() {
   const [selectedCampaignId, setSelectedCampaignId] = useState<number | null>(null);
   const [showAddForm, setShowAddForm] = useState(false);
   const [csvPreview, setCsvPreview] = useState<Array<Record<string, string>> | null>(null);
-  const [addForm, setAddForm] = useState({ name: '', phone: '', company: '', email: '', notes: '' });
+  const [addForm, setAddForm] = useState({ name: '', phone: '', company: '', email: '', notes: '', ivrSequence: '' });
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const load = () => {
@@ -43,6 +44,7 @@ export default function Contacts() {
       company: row.company || row.Company || '',
       email: row.email || row.Email || '',
       notes: row.notes || row.Notes || '',
+      ivrSequence: row.ivr_sequence || row.ivrSequence || row.ivr || '',
     })).filter((c) => c.phone);
 
     await api.contacts.bulkImport(selectedCampaignId, mapped);
@@ -56,7 +58,7 @@ export default function Contacts() {
     if (!selectedCampaignId) return;
     await api.contacts.create({ campaignId: selectedCampaignId, ...addForm });
     setShowAddForm(false);
-    setAddForm({ name: '', phone: '', company: '', email: '', notes: '' });
+    setAddForm({ name: '', phone: '', company: '', email: '', notes: '', ivrSequence: '' });
     load();
   };
 
@@ -154,6 +156,7 @@ export default function Contacts() {
               <th className="px-4 py-3 font-medium">Phone</th>
               <th className="px-4 py-3 font-medium">Company</th>
               <th className="px-4 py-3 font-medium">Status</th>
+              <th className="px-4 py-3 font-medium">IVR</th>
               <th className="px-4 py-3 font-medium">Calls</th>
               <th className="px-4 py-3 font-medium w-12"></th>
             </tr>
@@ -165,6 +168,15 @@ export default function Contacts() {
                 <td className="px-4 py-3 font-mono text-xs">{c.phone}</td>
                 <td className="px-4 py-3 text-gray-400">{c.company || '—'}</td>
                 <td className="px-4 py-3"><span className={statusBadge(c.status)}>{c.status}</span></td>
+                <td className="px-4 py-3">
+                  {(c as any).ivrSequence ? (
+                    <span className="px-2 py-0.5 rounded text-xs font-medium bg-blue-900 text-blue-300 font-mono">
+                      {(c as any).ivrSequence}
+                    </span>
+                  ) : (
+                    <span className="text-gray-600">—</span>
+                  )}
+                </td>
                 <td className="px-4 py-3 text-gray-400">{c.callCount}</td>
                 <td className="px-4 py-3">
                   <button
@@ -205,6 +217,14 @@ export default function Contacts() {
                 />
               </div>
             ))}
+            <div className="border-t border-gray-800 pt-3">
+              <label className="block text-sm text-gray-400 mb-1">IVR Navigation (optional)</label>
+              <p className="text-xs text-gray-600 mb-2">Override the campaign's IVR for this contact</p>
+              <IvrBuilder
+                value={addForm.ivrSequence}
+                onChange={(seq) => setAddForm({ ...addForm, ivrSequence: seq })}
+              />
+            </div>
             <button type="submit" className="w-full py-2 bg-emerald-600 hover:bg-emerald-500 rounded-lg text-sm font-medium transition-colors">
               Add Contact
             </button>

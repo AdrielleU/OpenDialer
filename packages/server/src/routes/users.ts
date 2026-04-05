@@ -3,7 +3,8 @@ import { db } from '../db/index.js';
 import { users } from '../db/schema.js';
 import { eq } from 'drizzle-orm';
 import bcrypt from 'bcryptjs';
-import { resetMultiUserCache } from './auth.js';
+import { getProvider } from '../providers/index.js';
+import { config } from '../config.js';
 
 export const userRoutes: FastifyPluginAsync = async (fastify) => {
   // Require admin role for all routes
@@ -67,7 +68,27 @@ export const userRoutes: FastifyPluginAsync = async (fastify) => {
       })
       .returning();
 
-    resetMultiUserCache();
+    // Provision Telnyx SIP credentials for operators
+    const connectionId = config.TELNYX_CONNECTION_ID;
+    if (connectionId) {
+      try {
+        const provider = await getProvider();
+        const cred = await provider.provisionCredential(
+          connectionId,
+          `operator-${newUser.id}-${newUser.email}`,
+        );
+        await db
+          .update(users)
+          .set({
+            sipUsername: cred.sipUsername,
+            sipPassword: cred.sipPassword,
+            telnyxCredentialId: cred.id,
+          })
+          .where(eq(users.id, newUser.id));
+      } catch (err: any) {
+        console.error(`[users] Failed to provision SIP credential for ${email}:`, err.message);
+      }
+    }
 
     return reply.code(201).send({
       id: newUser.id,
@@ -144,8 +165,17 @@ export const userRoutes: FastifyPluginAsync = async (fastify) => {
     const user = await db.select().from(users).where(eq(users.id, id)).get();
     if (!user) return reply.code(404).send({ error: 'User not found.' });
 
+    // Clean up Telnyx credential
+    if (user.telnyxCredentialId) {
+      try {
+        const provider = await getProvider();
+        await provider.deleteCredential?.(user.telnyxCredentialId);
+      } catch (err: any) {
+        console.error(`[users] Failed to delete SIP credential:`, err.message);
+      }
+    }
+
     await db.delete(users).where(eq(users.id, id));
-    resetMultiUserCache();
 
     return reply.code(204).send();
   });

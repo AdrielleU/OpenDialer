@@ -4,11 +4,12 @@ import {
   getTeamSession,
   getInFlightCall,
   updateInFlightCall,
+  getOperator,
 } from '../dialer/team-state.js';
 import { getProvider } from '../providers/index.js';
-import { broadcast } from '../ws/index.js';
+import { broadcast, broadcastToUser } from '../ws/index.js';
 import { db } from '../db/index.js';
-import { campaigns, recordings, transcripts, callLogs } from '../db/schema.js';
+import { campaigns, contacts, recordings, transcripts, callLogs } from '../db/schema.js';
 import { eq } from 'drizzle-orm';
 import { config } from '../config.js';
 
@@ -120,6 +121,109 @@ export const telnyxWebhookRoutes: FastifyPluginAsync = async (fastify) => {
         }
 
         case 'call.answered': {
+          // Check if this contact has an IVR sequence to navigate
+          const answeredCall = getInFlightCall(call_control_id);
+          if (answeredCall) {
+            const ivrContact = await db
+              .select()
+              .from(contacts)
+              .where(eq(contacts.id, answeredCall.contactId))
+              .get();
+
+            // Use contact IVR sequence, fall back to campaign-level
+            const ivrSeq = ivrContact?.ivrSequence || session.campaignId
+              ? (await db.select().from(campaigns).where(eq(campaigns.id, session.campaignId)).get())?.ivrSequence
+              : null;
+
+            if (ivrSeq) {
+              // Execute IVR navigation — send DTMF sequence
+              broadcast({
+                type: 'call_status_changed',
+                data: {
+                  callState: 'amd_detecting',
+                  contactId: answeredCall.contactId,
+                  callControlId: call_control_id,
+                  message: 'Navigating IVR...',
+                },
+              });
+
+              try {
+                const provider = await getProvider();
+                await provider.sendDTMF(call_control_id, ivrSeq);
+              } catch (err: any) {
+                fastify.log.error({ err, call_control_id }, 'IVR DTMF failed');
+              }
+
+              // After IVR nav — bridge operator (muted), play greeting, operator unmutes when ready
+              const ivrCampaign = await db
+                .select()
+                .from(campaigns)
+                .where(eq(campaigns.id, session.campaignId))
+                .get();
+
+              const hasGreeting =
+                (ivrCampaign?.ivrGreetingType === 'tts' && ivrCampaign.ivrGreetingTemplate) ||
+                ivrCampaign?.ivrGreetingType === 'recording';
+
+              // Route to operator first — they'll be muted if there's a greeting
+              updateInFlightCall(call_control_id, { callState: 'human_answered' });
+              const routed = await dialerEngine.routeToOperator(call_control_id);
+
+              if (routed && hasGreeting) {
+                const provider = await getProvider();
+                const call = getInFlightCall(call_control_id);
+                const operator = call?.assignedOperatorId
+                  ? getOperator(call.assignedOperatorId)
+                  : null;
+
+                // Mute the operator's WebRTC leg so contact only hears the greeting
+                if (operator?.webrtcCallControlId) {
+                  try {
+                    await provider.mute(operator.webrtcCallControlId);
+                  } catch {
+                    // Mute may not be supported — continue anyway
+                  }
+                }
+
+                // Play the greeting
+                if (ivrCampaign?.ivrGreetingType === 'tts' && ivrCampaign.ivrGreetingTemplate) {
+                  let greeting = ivrCampaign.ivrGreetingTemplate;
+                  greeting = greeting.replace(/\{\{name\}\}/g, ivrContact?.name || 'there');
+                  greeting = greeting.replace(/\{\{company\}\}/g, ivrContact?.company || '');
+                  greeting = greeting.replace(/\{\{notes\}\}/g, ivrContact?.notes || '');
+                  greeting = greeting.replace(/\{\{phone\}\}/g, ivrContact?.phone || '');
+
+                  try {
+                    await provider.speak(call_control_id, greeting);
+                  } catch (err: any) {
+                    fastify.log.error({ err, call_control_id }, 'IVR TTS greeting failed');
+                  }
+                } else if (ivrCampaign?.ivrGreetingType === 'recording') {
+                  try {
+                    await playOpener(call_control_id, session.campaignId, state);
+                  } catch (err: any) {
+                    fastify.log.error({ err, call_control_id }, 'IVR opener playback failed');
+                  }
+                }
+
+                // Notify operator they're muted and can stop playback
+                if (operator) {
+                  broadcastToUser(operator.userId, {
+                    type: 'call_status_changed',
+                    data: {
+                      callState: 'operator_bridged',
+                      contactId: answeredCall.contactId,
+                      callControlId: call_control_id,
+                      message: 'Greeting playing — click "Stop & Talk" when ready.',
+                      muted: true,
+                    },
+                  });
+                }
+              }
+              break;
+            }
+          }
+
           updateInFlightCall(call_control_id, { callState: 'amd_detecting' });
           broadcast({
             type: 'call_status_changed',
@@ -190,14 +294,24 @@ export const telnyxWebhookRoutes: FastifyPluginAsync = async (fastify) => {
               },
             });
 
-            // Play opener first, then auto-route
-            try {
-              await playOpener(call_control_id, session.campaignId, state);
-            } catch (err: any) {
-              fastify.log.error({ err, call_control_id }, 'Failed to play opener');
+            // Check campaign setting: skip opener if dropIfNoOperator is enabled
+            const routeCampaign = await db
+              .select()
+              .from(campaigns)
+              .where(eq(campaigns.id, session.campaignId))
+              .get();
+            const dropIfNoOp = routeCampaign?.dropIfNoOperator ?? true;
+
+            if (!dropIfNoOp) {
+              // Legacy mode: play opener first, then route
+              try {
+                await playOpener(call_control_id, session.campaignId, state);
+              } catch (err: any) {
+                fastify.log.error({ err, call_control_id }, 'Failed to play opener');
+              }
             }
 
-            // Auto-route to available operator
+            // Auto-route to available operator (or drop if none available)
             await dialerEngine.routeToOperator(call_control_id);
           }
           break;
@@ -279,6 +393,7 @@ export const telnyxWebhookRoutes: FastifyPluginAsync = async (fastify) => {
                 data: {
                   callLogId: callLog.id,
                   contactId: getInFlightCall(call_control_id)?.contactId,
+                  speaker: 'inbound',
                   transcript: transcriptionData.transcript,
                   confidence: transcriptionData.confidence,
                 },

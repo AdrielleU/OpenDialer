@@ -17,7 +17,12 @@ export default function Transcription() {
   const [expandedCall, setExpandedCall] = useState<number | null>(null);
   const [loading, setLoading] = useState(false);
   const [configCampaignId, setConfigCampaignId] = useState<number | null>(null);
-  const [configForm, setConfigForm] = useState({ enableTranscription: false, transcriptionEngine: 'telnyx' });
+  const [configForm, setConfigForm] = useState({
+    enableTranscription: false,
+    transcriptionEngine: 'telnyx',
+    sttProvider: '',
+    sttApiKey: '',
+  });
   const [saving, setSaving] = useState(false);
 
   useEffect(() => {
@@ -36,6 +41,8 @@ export default function Transcription() {
     setConfigForm({
       enableTranscription: (campaign as any).enableTranscription ?? false,
       transcriptionEngine: (campaign as any).transcriptionEngine ?? 'telnyx',
+      sttProvider: (campaign as any).sttProvider ?? '',
+      sttApiKey: (campaign as any).sttApiKey ?? '',
     });
   };
 
@@ -83,16 +90,15 @@ export default function Transcription() {
           <div className="flex items-center gap-2 mb-2">
             <Globe size={18} className="text-blue-400" />
             <h3 className="font-semibold">Bring Your Own STT</h3>
-            <span className="text-xs bg-gray-800 text-gray-400 px-2 py-0.5 rounded-full">Coming Soon</span>
           </div>
           <p className="text-sm text-gray-400 mb-3">
-            Stream raw call audio via WebSocket to any STT provider — Deepgram, OpenAI Whisper,
-            AssemblyAI, or your own model. Maximum flexibility.
+            Stream raw call audio via WebSocket to any STT provider — self-hosted Whisper (HIPAA),
+            Deepgram, or AssemblyAI.
           </p>
           <div className="space-y-1 text-xs text-gray-500">
-            <div>WebSocket media streaming (PCMU, OPUS, L16)</div>
-            <div>Pipe to any external STT service</div>
-            <div>Post-call transcription with Whisper also supported</div>
+            <div>Self-hosted Whisper — free, GPU-powered, fully on-prem</div>
+            <div>Deepgram — $0.0043/min, real-time streaming</div>
+            <div>AssemblyAI — $0.015/min, real-time streaming</div>
           </div>
         </div>
       </div>
@@ -115,9 +121,11 @@ export default function Transcription() {
                 <div>
                   <div className="font-medium text-sm">{campaign.name}</div>
                   <div className="text-xs text-gray-500">
-                    {(campaign as any).enableTranscription
-                      ? `Transcription ON — ${engineLabels[(campaign as any).transcriptionEngine || 'telnyx']?.name || 'Telnyx'} engine`
-                      : 'Transcription OFF'}
+                    {(campaign as any).sttProvider
+                      ? `BYO STT — ${(campaign as any).sttProvider === 'whisper' ? 'Self-hosted Whisper' : (campaign as any).sttProvider}`
+                      : (campaign as any).enableTranscription
+                        ? `Telnyx Built-in — ${engineLabels[(campaign as any).transcriptionEngine || 'telnyx']?.name || 'Telnyx'} engine`
+                        : 'Transcription OFF'}
                   </div>
                 </div>
               </div>
@@ -307,6 +315,52 @@ export default function Transcription() {
                 ))}
               </div>
             )}
+
+            {/* BYO STT — alternative to Telnyx built-in */}
+            <div className="border-t border-gray-800 pt-4 mt-2">
+              <label className="block text-sm text-gray-400 mb-2">
+                BYO STT Provider <span className="text-gray-600">(overrides Telnyx built-in)</span>
+              </label>
+              <select
+                value={configForm.sttProvider}
+                onChange={(e) =>
+                  setConfigForm({ ...configForm, sttProvider: e.target.value })
+                }
+                className="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm mb-2"
+              >
+                <option value="">None — use Telnyx built-in</option>
+                <option value="whisper">Self-hosted Whisper (free, HIPAA)</option>
+                <option value="deepgram">Deepgram ($0.0043/min)</option>
+                <option value="assemblyai">AssemblyAI ($0.015/min)</option>
+              </select>
+
+              {configForm.sttProvider === 'whisper' && (
+                <div>
+                  <label className="block text-xs text-gray-500 mb-1">
+                    Whisper WebSocket URL <span className="text-gray-600">(blank = ws://whisper:8786/v1/listen)</span>
+                  </label>
+                  <input
+                    value={configForm.sttApiKey}
+                    onChange={(e) => setConfigForm({ ...configForm, sttApiKey: e.target.value })}
+                    className="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm"
+                    placeholder="ws://whisper:8786/v1/listen"
+                  />
+                </div>
+              )}
+
+              {configForm.sttProvider && configForm.sttProvider !== 'whisper' && (
+                <div>
+                  <label className="block text-xs text-gray-500 mb-1">API Key</label>
+                  <input
+                    type="password"
+                    value={configForm.sttApiKey}
+                    onChange={(e) => setConfigForm({ ...configForm, sttApiKey: e.target.value })}
+                    className="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm"
+                    placeholder="Enter API key"
+                  />
+                </div>
+              )}
+            </div>
 
             <div className="flex gap-3 pt-2">
               <button

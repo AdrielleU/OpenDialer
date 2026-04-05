@@ -9,6 +9,7 @@
     "build": "pnpm --filter @opendialer/web build && pnpm --filter @opendialer/server build",
     "start": "node packages/server/dist/index.js",
     "test": "pnpm -r test",
+    "test:e2e": "pnpm build && rm -f data/e2e-test.db && pnpm exec playwright test",
     "lint": "pnpm -r lint"
   },
   "engines": {
@@ -20,5 +21,8 @@
       "esbuild",
       "@esbuild/linux-x64"
     ]
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.59.1"
   }
 }

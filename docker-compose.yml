@@ -42,6 +42,28 @@ services:
     profiles:
       - tunnel-named
 
+  # Self-hosted Whisper STT — GPU-accelerated transcription
+  # Requires NVIDIA GPU with nvidia-container-toolkit installed
+  # Run: docker compose --profile whisper up --build
+  # Then set campaign STT provider to "whisper" in the Transcription page
+  whisper:
+    image: fedirz/faster-whisper-server:latest-cuda
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+    environment:
+      - WHISPER__MODEL=Systran/faster-whisper-base.en
+      - WHISPER__DEVICE=cuda
+    ports:
+      - "8786:8000"
+    restart: unless-stopped
+    profiles:
+      - whisper
+
 volumes:
   db-data:      # Persistent SQLite database (unused with external DB)
   uploads:      # Persistent uploaded recordings

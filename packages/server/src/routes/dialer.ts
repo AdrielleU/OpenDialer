@@ -11,6 +11,8 @@ import { broadcast } from '../ws/index.js';
 import { db } from '../db/index.js';
 import { users } from '../db/schema.js';
 import { eq } from 'drizzle-orm';
+import { getProvider } from '../providers/index.js';
+import { config } from '../config.js';
 
 export const dialerRoutes: FastifyPluginAsync = async (fastify) => {
   // Start dialing session for a campaign (admin only)
@@ -101,7 +103,50 @@ export const dialerRoutes: FastifyPluginAsync = async (fastify) => {
       data: { operatorId: userId, name: user.name, availability: 'available' },
     });
 
-    return { status: 'joined', operator: op };
+    return {
+      status: 'joined',
+      operator: op,
+      webrtcCredentials: user.sipUsername
+        ? { login: user.sipUsername, password: user.sipPassword }
+        : null,
+    };
+  });
+
+  // Get WebRTC credentials for the authenticated operator (with lazy provisioning)
+  fastify.get('/webrtc-credentials', async (request, reply) => {
+    const userId = (request as any).userId as number;
+    const user = await db.select().from(users).where(eq(users.id, userId)).get();
+    if (!user) return reply.code(404).send({ error: 'User not found.' });
+
+    // Return existing credentials
+    if (user.sipUsername && user.sipPassword) {
+      return { login: user.sipUsername, password: user.sipPassword };
+    }
+
+    // Lazy provisioning for users created before this feature
+    const connectionId = config.TELNYX_CONNECTION_ID;
+    if (!connectionId) {
+      return reply.code(400).send({ error: 'TELNYX_CONNECTION_ID not configured.' });
+    }
+
+    try {
+      const provider = await getProvider();
+      const cred = await provider.provisionCredential(
+        connectionId,
+        `operator-${userId}-${user.email}`,
+      );
+      await db
+        .update(users)
+        .set({
+          sipUsername: cred.sipUsername,
+          sipPassword: cred.sipPassword,
+          telnyxCredentialId: cred.id,
+        })
+        .where(eq(users.id, userId));
+      return { login: cred.sipUsername, password: cred.sipPassword };
+    } catch (err: any) {
+      return reply.code(500).send({ error: 'Failed to provision WebRTC credentials.' });
+    }
   });
 
   // Operator leaves the session
@@ -148,6 +193,37 @@ export const dialerRoutes: FastifyPluginAsync = async (fastify) => {
       data: { operatorId: userId, availability: 'wrap_up' },
     });
     return { status: 'wrap_up' };
+  });
+
+  // Stop playback and unmute operator — "Stop & Talk" button
+  fastify.post<{ Body: { callControlId: string } }>('/stop-and-talk', async (request, reply) => {
+    const userId = (request as any).userId as number;
+    const { callControlId } = request.body as { callControlId: string };
+
+    try {
+      const provider = await getProvider();
+      const operator = getOperator(userId);
+
+      // Stop any playing audio on the call
+      try {
+        await provider.stopPlayback(callControlId);
+      } catch {
+        // Playback may have already ended
+      }
+
+      // Unmute the operator's WebRTC leg
+      if (operator?.webrtcCallControlId) {
+        try {
+          await provider.unmute(operator.webrtcCallControlId);
+        } catch {
+          // May already be unmuted
+        }
+      }
+
+      return { status: 'talking' };
+    } catch (err: any) {
+      return reply.code(400).send({ error: err.message });
+    }
   });
 
   // Get current team session status

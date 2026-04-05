@@ -1,4 +1,4 @@
-import type { TelephonyProvider, DialParams, DialResult } from './types.js';
+import type { TelephonyProvider, TelephonyCredential, DialParams, DialResult } from './types.js';
 
 export class TwilioProvider implements TelephonyProvider {
   async dial(_params: DialParams): Promise<DialResult> {
@@ -38,6 +38,30 @@ export class TwilioProvider implements TelephonyProvider {
   }
 
   async stopStreaming(_callControlId: string): Promise<void> {
+    throw new Error('Twilio provider not yet implemented');
+  }
+
+  async mute(_callControlId: string): Promise<void> {
+    throw new Error('Twilio provider not yet implemented');
+  }
+
+  async unmute(_callControlId: string): Promise<void> {
+    throw new Error('Twilio provider not yet implemented');
+  }
+
+  async stopPlayback(_callControlId: string): Promise<void> {
+    throw new Error('Twilio provider not yet implemented');
+  }
+
+  async sendDTMF(_callControlId: string, _digits: string): Promise<void> {
+    throw new Error('Twilio provider not yet implemented');
+  }
+
+  async speak(_callControlId: string, _text: string): Promise<void> {
+    throw new Error('Twilio provider not yet implemented');
+  }
+
+  async provisionCredential(_connectionId: string, _name: string): Promise<TelephonyCredential> {
     throw new Error('Twilio provider not yet implemented');
   }
 }

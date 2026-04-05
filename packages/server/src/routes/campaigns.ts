@@ -13,6 +13,12 @@ export const campaignRoutes: FastifyPluginAsync = async (fastify) => {
         callerId: campaigns.callerId,
         openerRecordingId: campaigns.openerRecordingId,
         voicemailRecordingId: campaigns.voicemailRecordingId,
+        enableTranscription: campaigns.enableTranscription,
+        transcriptionEngine: campaigns.transcriptionEngine,
+        sttProvider: campaigns.sttProvider,
+        dropIfNoOperator: campaigns.dropIfNoOperator,
+        ivrSequence: campaigns.ivrSequence,
+        ivrGreetingType: campaigns.ivrGreetingType,
         status: campaigns.status,
         createdAt: campaigns.createdAt,
         updatedAt: campaigns.updatedAt,
@@ -32,13 +38,24 @@ export const campaignRoutes: FastifyPluginAsync = async (fastify) => {
   });
 
   // Create campaign
-  fastify.post<{
-    Body: { name: string; callerId: string; openerRecordingId?: number; voicemailRecordingId?: number };
-  }>('/', async (request, reply) => {
-    const { name, callerId, openerRecordingId, voicemailRecordingId } = request.body;
+  fastify.post('/', async (request, reply) => {
+    const body = request.body as Record<string, any>;
     const result = await db
       .insert(campaigns)
-      .values({ name, callerId, openerRecordingId, voicemailRecordingId })
+      .values({
+        name: body.name,
+        callerId: body.callerId,
+        openerRecordingId: body.openerRecordingId || null,
+        voicemailRecordingId: body.voicemailRecordingId || null,
+        dropIfNoOperator: body.dropIfNoOperator ?? true,
+        ivrSequence: body.ivrSequence || null,
+        ivrGreetingType: body.ivrGreetingType || 'none',
+        ivrGreetingTemplate: body.ivrGreetingTemplate || null,
+        enableTranscription: body.enableTranscription ?? false,
+        transcriptionEngine: body.transcriptionEngine || 'telnyx',
+        sttProvider: body.sttProvider || null,
+        sttApiKey: body.sttApiKey || null,
+      })
       .returning();
     return reply.code(201).send(result[0]);
   });

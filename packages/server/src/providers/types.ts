@@ -18,6 +18,12 @@ export interface TranscriptionOptions {
   tracks?: 'inbound' | 'outbound' | 'both';
 }
 
+export interface TelephonyCredential {
+  id: string;
+  sipUsername: string;
+  sipPassword: string;
+}
+
 export interface TelephonyProvider {
   dial(params: DialParams): Promise<DialResult>;
   hangup(callControlId: string): Promise<void>;
@@ -29,4 +35,11 @@ export interface TelephonyProvider {
   stopTranscription(callControlId: string): Promise<void>;
   startStreaming(callControlId: string, streamUrl: string, track?: string): Promise<void>;
   stopStreaming(callControlId: string): Promise<void>;
+  sendDTMF(callControlId: string, digits: string): Promise<void>;
+  speak(callControlId: string, text: string, voice?: string): Promise<void>;
+  mute(callControlId: string): Promise<void>;
+  unmute(callControlId: string): Promise<void>;
+  stopPlayback(callControlId: string): Promise<void>;
+  provisionCredential(connectionId: string, name: string): Promise<TelephonyCredential>;
+  deleteCredential?(credentialId: string): Promise<void>;
 }

@@ -30,8 +30,8 @@ packages/server/src/
 packages/web/src/
   pages/         — Route pages (Dialer, Campaigns, Contacts, Recordings,
                    Transcription, Team, Analytics, Settings, Login)
-  hooks/         — useWebSocket (actually EventSource/SSE), useTelnyxClient (WebRTC)
-  components/    — Layout with role-based nav, user context
+  hooks/         — useWebSocket (SSE with operator/call tracking), useTelnyxClient (WebRTC per-operator)
+  components/    — Layout with role-based nav, OperatorStatusPanel, IncomingCallCard
   lib/api.ts     — Typed API client
 
 docs/
@@ -63,7 +63,7 @@ Uses `@libsql/client` which supports both local SQLite and remote libSQL. The `D
 - Local: `DATABASE_URL=./data/opendialer.db` (default)
 - Remote: `DATABASE_URL=libsql://your-db.example.com` + `DATABASE_AUTH_TOKEN=...`
 
-Auto-detected in `packages/server/src/db/index.ts`. 8 tables: settings, users, campaigns, contacts, recordings, recording_profiles, call_logs, transcripts.
+Auto-detected in `packages/server/src/db/index.ts`. 8 tables: settings, users (with SIP credentials), campaigns, contacts, recordings, recording_profiles, call_logs, transcripts.
 
 ## Code Style
 
@@ -81,7 +81,8 @@ Auto-detected in `packages/server/src/db/index.ts`. 8 tables: settings, users, c
 - **Client state tracking:** JSON payload base64-encoded into Telnyx `client_state` field, echoed back in webhooks for campaign/contact context
 - **Provider interface** in `packages/server/src/providers/types.ts` — all telephony calls (dial, hangup, playAudio, bridge, transcription) go through this abstraction
 - **Transcription** — auto-starts via Telnyx Call Control when operator bridges in (if enabled per campaign)
-- **Authentication** — multi-user with bcrypt passwords + TOTP MFA. First-login wizard forces password change + MFA setup. Roles: admin (manage team, start/stop sessions) and operator (join sessions, take calls). Optional WorkOS SSO. Legacy single-password mode preserved for backward compat
+- **Authentication** — multi-user with bcrypt passwords + optional TOTP MFA. First-login wizard forces password change + MFA setup (if `REQUIRE_MFA=true`). Roles: admin (manage team, start/stop sessions) and operator (join sessions, take calls). Optional WorkOS SSO. Rate-limited login (5 attempts/30s via `@fastify/rate-limit`)
+- **Per-operator WebRTC credentials** — each operator gets their own Telnyx Telephony Credential (SIP username/password) provisioned via `POST /v2/telephony_credentials`. Stored on the users table (`sipUsername`, `sipPassword`, `telnyxCredentialId`). Lazy provisioning via `GET /api/dialer/webrtc-credentials` for users created before this feature. Credentials are deleted from Telnyx when the user is deleted
 - **SSE targeting** in `packages/server/src/ws/index.ts` — `broadcast()` for team events, `broadcastToUser(userId)` for targeted events (call routing, transcription)
 - **Test auth** — tests use dynamic imports in `setup.ts` to avoid ESM import hoisting issues with `DATABASE_URL`. A real admin user is created in the test DB, and a test session with that user's ID is injected
 
@@ -96,13 +97,12 @@ Copy `.env.example` to `.env`. Required variables:
 Auth:
 - `DEFAULT_ADMIN_PASSWORD` — password for auto-created admin on first startup (must change on first login)
 - `DEFAULT_ADMIN_EMAIL` — email for the auto-created admin (default: `admin@localhost`)
-- `REQUIRE_MFA` — force TOTP MFA setup on first login (default: `true`)
+- `REQUIRE_MFA` — force TOTP MFA setup on first login (default: `false`)
 
 Optional:
 - `DATABASE_URL` — Local path or remote libSQL URL (default: `./data/opendialer.db`)
 - `DATABASE_AUTH_TOKEN` — Auth token for remote libSQL databases
 - `TELNYX_PUBLIC_KEY` — Base64 Ed25519 public key for webhook signature verification
-- `ADMIN_PASSWORD` — Legacy single-password mode (no users table, backward compat)
 - `WORKOS_API_KEY` + `WORKOS_CLIENT_ID` — WorkOS SSO (Google, GitHub, SAML)
 
 ## Author

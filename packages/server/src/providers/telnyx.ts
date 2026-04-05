@@ -1,10 +1,18 @@
 import Telnyx from 'telnyx';
-import type { TelephonyProvider, DialParams, DialResult, TranscriptionOptions } from './types.js';
+import type {
+  TelephonyProvider,
+  TelephonyCredential,
+  DialParams,
+  DialResult,
+  TranscriptionOptions,
+} from './types.js';
 
 export class TelnyxProvider implements TelephonyProvider {
   private client: any;
+  private apiKey: string;
 
   constructor(apiKey: string) {
+    this.apiKey = apiKey;
     this.client = new (Telnyx as any)(apiKey);
   }
 
@@ -84,5 +92,64 @@ export class TelnyxProvider implements TelephonyProvider {
 
   async stopStreaming(callControlId: string): Promise<void> {
     await this.client.calls.actions.streamingStop(callControlId);
+  }
+
+  async mute(callControlId: string): Promise<void> {
+    await this.client.calls.actions.mute(callControlId);
+  }
+
+  async unmute(callControlId: string): Promise<void> {
+    await this.client.calls.actions.unmute(callControlId);
+  }
+
+  async stopPlayback(callControlId: string): Promise<void> {
+    await this.client.calls.actions.stopPlayback(callControlId);
+  }
+
+  async sendDTMF(callControlId: string, digits: string): Promise<void> {
+    await this.client.calls.actions.sendDTMF(callControlId, {
+      digits,
+    });
+  }
+
+  async speak(callControlId: string, text: string, voice = 'female'): Promise<void> {
+    await this.client.calls.actions.speak(callControlId, {
+      payload: text,
+      voice,
+      language: 'en-US',
+    });
+  }
+
+  async provisionCredential(connectionId: string, name: string): Promise<TelephonyCredential> {
+    const res = await fetch('https://api.telnyx.com/v2/telephony_credentials', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${this.apiKey}`,
+      },
+      body: JSON.stringify({ connection_id: connectionId, name }),
+    });
+
+    if (!res.ok) {
+      const err = await res.text();
+      throw new Error(`Telnyx credential provisioning failed: ${res.status} ${err}`);
+    }
+
+    const { data } = await res.json();
+    return {
+      id: data.id,
+      sipUsername: data.sip_username,
+      sipPassword: data.sip_password,
+    };
+  }
+
+  async deleteCredential(credentialId: string): Promise<void> {
+    const res = await fetch(`https://api.telnyx.com/v2/telephony_credentials/${credentialId}`, {
+      method: 'DELETE',
+      headers: { Authorization: `Bearer ${this.apiKey}` },
+    });
+    if (!res.ok && res.status !== 404) {
+      throw new Error(`Telnyx credential deletion failed: ${res.status}`);
+    }
   }
 }

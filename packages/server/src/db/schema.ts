@@ -17,6 +17,9 @@ export const users = sqliteTable('users', {
   role: text('role', { enum: ['admin', 'operator'] }).notNull().default('operator'),
   mustChangePassword: integer('must_change_password', { mode: 'boolean' }).notNull().default(true),
   mustSetupMfa: integer('must_setup_mfa', { mode: 'boolean' }).notNull().default(true),
+  sipUsername: text('sip_username'),
+  sipPassword: text('sip_password'),
+  telnyxCredentialId: text('telnyx_credential_id'),
   createdAt: text('created_at')
     .notNull()
     .$defaultFn(() => new Date().toISOString()),
@@ -36,6 +39,10 @@ export const campaigns = sqliteTable('campaigns', {
   }).default('telnyx'),
   sttProvider: text('stt_provider'),
   sttApiKey: text('stt_api_key'),
+  dropIfNoOperator: integer('drop_if_no_operator', { mode: 'boolean' }).notNull().default(true),
+  ivrSequence: text('ivr_sequence'),
+  ivrGreetingType: text('ivr_greeting_type', { enum: ['none', 'recording', 'tts'] }).default('none'),
+  ivrGreetingTemplate: text('ivr_greeting_template'),
   status: text('status', { enum: ['draft', 'active', 'paused', 'completed'] })
     .notNull()
     .default('draft'),
@@ -79,7 +86,7 @@ export const contacts = sqliteTable('contacts', {
     .notNull()
     .default('pending'),
   hubspotContactId: text('hubspot_contact_id'),
-  apolloContactId: text('apollo_contact_id'),
+  ivrSequence: text('ivr_sequence'),
   callCount: integer('call_count').notNull().default(0),
   lastCalledAt: text('last_called_at'),
   createdAt: text('created_at')

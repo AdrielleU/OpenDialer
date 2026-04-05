@@ -7,16 +7,18 @@ interface TelnyxRTCClient {
   on(event: string, handler: (...args: any[]) => void): void;
   off(event: string, handler: (...args: any[]) => void): void;
   newCall(params: { destinationNumber: string; callerName?: string; callerNumber?: string }): any;
+  calls?: Map<string, any>;
 }
 
 interface UseTelnyxClientOptions {
-  login: string; // SIP username or JWT
+  login: string; // SIP username
   password?: string;
   loginToken?: string;
 }
 
 export function useTelnyxClient(options?: UseTelnyxClientOptions) {
   const [isConnected, setIsConnected] = useState(false);
+  const [callControlId, setCallControlId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const clientRef = useRef<TelnyxRTCClient | null>(null);
 
@@ -27,7 +29,6 @@ export function useTelnyxClient(options?: UseTelnyxClientOptions) {
     }
 
     try {
-      // Dynamic import of @telnyx/webrtc
       const { TelnyxRTC } = await import('@telnyx/webrtc');
 
       const client = new TelnyxRTC({
@@ -36,9 +37,26 @@ export function useTelnyxClient(options?: UseTelnyxClientOptions) {
         ...(options.loginToken ? { login_token: options.loginToken } : {}),
       }) as unknown as TelnyxRTCClient;
 
-      client.on('telnyx.ready', () => setIsConnected(true));
+      client.on('telnyx.ready', (session: any) => {
+        setIsConnected(true);
+        // Extract the call control ID from the registered session
+        const ccId = session?.call_control_id || session?.callControlId;
+        if (ccId) setCallControlId(ccId);
+      });
+
+      client.on('telnyx.notification', (notification: any) => {
+        // Capture callControlId from incoming call notifications
+        const ccId =
+          notification?.call?.callControlId ||
+          notification?.call?.call_control_id;
+        if (ccId) setCallControlId(ccId);
+      });
+
       client.on('telnyx.error', (err: any) => setError(err.message || 'WebRTC error'));
-      client.on('telnyx.socket.close', () => setIsConnected(false));
+      client.on('telnyx.socket.close', () => {
+        setIsConnected(false);
+        setCallControlId(null);
+      });
 
       client.connect();
       clientRef.current = client;
@@ -51,6 +69,7 @@ export function useTelnyxClient(options?: UseTelnyxClientOptions) {
     clientRef.current?.disconnect();
     clientRef.current = null;
     setIsConnected(false);
+    setCallControlId(null);
   }, []);
 
   useEffect(() => {
@@ -62,6 +81,7 @@ export function useTelnyxClient(options?: UseTelnyxClientOptions) {
   return {
     client: clientRef.current,
     isConnected,
+    callControlId,
     error,
     connect,
     disconnect,

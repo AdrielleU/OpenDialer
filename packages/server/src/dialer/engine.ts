@@ -147,12 +147,15 @@ export const dialerEngine = {
         contactId,
       });
 
+      // Disable AMD for contacts with IVR sequences (navigating phone trees)
+      const hasIvr = !!(contact.ivrSequence || campaign?.ivrSequence);
+
       const result = await provider.dial({
         to: contact.phone,
         from: campaign?.callerId || '',
         connectionId,
         webhookUrl,
-        enableAmd: true,
+        enableAmd: !hasIvr,
         clientState,
       });
 
@@ -189,7 +192,36 @@ export const dialerEngine = {
 
     const operator = findAvailableOperator();
     if (!operator) {
-      // No available operator — add to waiting queue
+      // Check campaign setting
+      const session = getTeamSession();
+      const campaign = await db
+        .select()
+        .from(campaigns)
+        .where(eq(campaigns.id, session.campaignId))
+        .get();
+
+      if (campaign?.dropIfNoOperator) {
+        // Drop the call — don't waste the contact's time
+        try {
+          const provider = await getProvider();
+          await provider.hangup(callControlId);
+        } catch {
+          // Call may have already ended
+        }
+        // Re-queue the contact for later
+        updateInFlightCall(callControlId, { callState: 'ended' });
+        await db
+          .update(contacts)
+          .set({ status: 'pending' })
+          .where(eq(contacts.id, call.contactId));
+        broadcast({
+          type: 'call_status_changed',
+          data: { callState: 'ended', contactId: call.contactId, message: 'No operator — will retry later.' },
+        });
+        return false;
+      }
+
+      // Queue mode — hold the call until an operator is free
       updateInFlightCall(callControlId, { callState: 'waiting_for_operator' });
       addToWaitingQueue(callControlId);
       broadcast({
@@ -228,13 +260,18 @@ export const dialerEngine = {
       }
     }
 
-    // Notify the specific operator
+    // Notify the specific operator with contact details
+    const contact = await db.select().from(contacts).where(eq(contacts.id, call.contactId)).get();
     broadcastToUser(operator.userId, {
       type: 'call_routed_to_you',
       data: {
         callControlId,
         contactId: call.contactId,
         operatorId: operator.userId,
+        contactName: contact?.name ?? null,
+        contactPhone: contact?.phone ?? '',
+        contactCompany: contact?.company ?? null,
+        contactNotes: contact?.notes ?? null,
       },
     });
 

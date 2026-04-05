@@ -22,7 +22,6 @@ describe('Auth API', () => {
     const res = await app.inject({ method: 'GET', url: '/api/auth/status' });
     expect(res.statusCode).toBe(200);
     const body = res.json();
-    expect(body.mode).toBeDefined();
     expect(body.loggedIn).toBeDefined();
   });
 

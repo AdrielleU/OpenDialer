@@ -220,7 +220,11 @@ export const api = {
         body: JSON.stringify({ callControlId }),
       }),
     jumpIn: () => request('/dialer/jump-in', { method: 'POST' }),
-    join: () => request('/dialer/join', { method: 'POST' }),
+    join: () =>
+      request<{ status: string; operator: any; webrtcCredentials?: { login: string; password: string } }>(
+        '/dialer/join',
+        { method: 'POST' },
+      ),
     leave: () => request('/dialer/leave', { method: 'POST' }),
     registerWebrtc: (callControlId: string) =>
       request('/dialer/register-webrtc', {
@@ -230,5 +234,12 @@ export const api = {
     setAvailable: () => request('/dialer/set-available', { method: 'POST' }),
     setWrapUp: () => request('/dialer/set-wrap-up', { method: 'POST' }),
     status: () => request<DialerStatus>('/dialer/status'),
+    stopAndTalk: (callControlId: string) =>
+      request('/dialer/stop-and-talk', {
+        method: 'POST',
+        body: JSON.stringify({ callControlId }),
+      }),
+    webrtcCredentials: () =>
+      request<{ login: string; password: string }>('/dialer/webrtc-credentials'),
   },
 };
