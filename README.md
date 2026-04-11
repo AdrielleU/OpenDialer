@@ -46,15 +46,38 @@ OpenDialer is a **browser-based power dialer** you self-host on your own infrast
 
 ### 💰 Why?
 
-| Product | Price | OpenDialer |
-|---------|-------|------------|
-| Orum | $250/user/mo | **$0 + ~$0.01/min** |
-| Nooks | $200+/user/mo | Self-hosted, BYOK |
-| PhoneBurner | $140/user/mo | No subscription |
-| Kixie | $95/user/mo | Fraction of cost |
-| JustCall | $49/user/mo | Full control |
+The biggest savings come from **replacing manual hand-dialing**, not from being cheaper than other paid software. Parallel dialing + auto-routing + AMD-driven voicemail drops mean operators only spend talk-time on each call instead of waiting on hold for the bulk of every call. That cuts FTE hours by ~30%.
 
-You bring your own Telnyx account. You pay only for minutes used (~$0.01-0.02/min). No per-seat fees, no vendor lock-in.
+**Headline numbers — annual operating cost** for an insurance-billing workflow (~25 min average call, ~60% hold time, $35/hr fully-loaded medical biller):
+
+| Scenario | Manual softphone | OpenDialer self-hosted | Annual savings |
+|---|---|---|---|
+| **Solo biller** (100 calls/wk) | $87,700 | **$60,500** | **$27,200 (-31%)** |
+| **Small team** (300 calls/wk, 3 ops) | $256,300 | **$181,500** | **$74,800 (-29%)** |
+| **Mid team** (1,000 calls/wk, 10 ops) | $856,800 | **$605,000** | **$251,800 (-29%)** |
+
+OpenDialer's *software-and-services cost* is tiny — most of those totals are operator salaries, which exist regardless of which dialer you use. The actual OpenDialer infrastructure runs around **$2,300/yr (solo)** to **$22,500/yr (mid team)** for Telnyx voice + DIDs + transcription + VPS:
+
+| Scenario | Telnyx voice | DIDs | VPS | Transcription (optional) | **OpenDialer total** |
+|---|---|---|---|---|---|
+| Solo (100 calls/wk) | $912/yr | $24/yr | $48/yr | $1,296/yr | **$2,280/yr** |
+| Small team (300 calls/wk) | $2,724/yr | $60/yr | $48/yr | $3,900/yr | **$6,732/yr** |
+| Mid team (1,000 calls/wk) | $9,096/yr | $240/yr | $240/yr | $13,000/yr | **$22,576/yr** |
+
+vs. competitor software for the same workload:
+
+| Option | Solo (1 op) | Small (3 ops) | Mid (10 ops) | Notes |
+|---|---|---|---|---|
+| **OpenDialer self-hosted** | **$2,280** | **$6,732** | **$22,576** | Software + telecom only |
+| Manual softphone (Bria + DID) | $720 | $720 | $720 | Cheap software, expensive labor |
+| Vicidial managed | $5,800 + $1k setup | $11,644 | $29,100 | Open source but ops-heavy |
+| Genesys CX 1 | n/a (5-seat min) | $4,900 | $32,400 | No transcription in base tier |
+| Five9 Healthcare | n/a (50-seat min) | $97,600 | $97,600 | 50-seat minimum kills SMB |
+| Infinitus AI | n/a (enterprise only) | n/a | ~$520k/yr | Full automation, no humans |
+
+You bring your own Telnyx account, pay per-minute (~$0.007/min for outbound). No per-seat fees, no vendor lock-in, no annual contracts. **A $4-7k/month software license replaced by ~$200-1900/month of pay-as-you-go infrastructure.**
+
+For the full pricing methodology, sources, and HIPAA-safe configuration, see [docs/pricing-comparison.md](docs/pricing-comparison.md).
 
 ### 🩺 Real-world use cases
 
