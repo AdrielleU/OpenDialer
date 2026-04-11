@@ -10,3 +10,8 @@ data/*
 .turbo/
 .vite/
 *.tsbuildinfo
+
+# Playwright / E2E test artifacts (auth state contains session cookies — never commit)
+test-results/
+playwright-report/
+e2e/.auth.json
