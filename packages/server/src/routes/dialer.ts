@@ -1,4 +1,5 @@
 import type { FastifyPluginAsync } from 'fastify';
+import { z } from 'zod';
 import { dialerEngine } from '../dialer/engine.js';
 import {
   addOperator,
@@ -6,17 +7,42 @@ import {
   setOperatorAvailability,
   setOperatorWebrtc,
   getOperator,
+  getInFlightCall,
+  getTeamSession,
 } from '../dialer/team-state.js';
+import { handleOperatorDisconnect } from '../dialer/disconnect.js';
 import { broadcast } from '../ws/index.js';
 import { db } from '../db/index.js';
-import { users } from '../db/schema.js';
+import { users, recordings } from '../db/schema.js';
 import { eq } from 'drizzle-orm';
 import { getProvider } from '../providers/index.js';
 import { config } from '../config.js';
+import { validate } from '../lib/validate.js';
+
+const PlayRecordingSchema = z.object({
+  callControlId: z.string().min(1),
+  recordingId: z.number().int().positive(),
+});
+
+const SpeakSchema = z.object({
+  callControlId: z.string().min(1),
+  text: z.string().min(1).max(1000),
+  voice: z.string().max(50).optional(),
+});
+
+// Returns true if the request is from an admin; otherwise sends 403 and returns false.
+function requireAdmin(request: any, reply: any): boolean {
+  if (request.userRole !== 'admin') {
+    reply.code(403).send({ error: 'Admin access required.' });
+    return false;
+  }
+  return true;
+}
 
 export const dialerRoutes: FastifyPluginAsync = async (fastify) => {
   // Start dialing session for a campaign (admin only)
   fastify.post<{ Body: { campaignId: number } }>('/start', async (request, reply) => {
+    if (!requireAdmin(request, reply)) return;
     try {
       await dialerEngine.startSession(request.body.campaignId);
       return { status: 'started' };
@@ -25,8 +51,9 @@ export const dialerRoutes: FastifyPluginAsync = async (fastify) => {
     }
   });
 
-  // Pause auto-advance
-  fastify.post('/pause', async (_request, reply) => {
+  // Pause auto-advance (admin only)
+  fastify.post('/pause', async (request, reply) => {
+    if (!requireAdmin(request, reply)) return;
     try {
       dialerEngine.pauseSession();
       return { status: 'paused' };
@@ -35,8 +62,9 @@ export const dialerRoutes: FastifyPluginAsync = async (fastify) => {
     }
   });
 
-  // Resume auto-advance
-  fastify.post('/resume', async (_request, reply) => {
+  // Resume auto-advance (admin only)
+  fastify.post('/resume', async (request, reply) => {
+    if (!requireAdmin(request, reply)) return;
     try {
       await dialerEngine.resumeSession();
       return { status: 'resumed' };
@@ -45,8 +73,9 @@ export const dialerRoutes: FastifyPluginAsync = async (fastify) => {
     }
   });
 
-  // Stop session entirely
-  fastify.post('/stop', async (_request, reply) => {
+  // Stop session entirely (admin only)
+  fastify.post('/stop', async (request, reply) => {
+    if (!requireAdmin(request, reply)) return;
     try {
       await dialerEngine.stopSession();
       return { status: 'stopped' };
@@ -152,8 +181,22 @@ export const dialerRoutes: FastifyPluginAsync = async (fastify) => {
   // Operator leaves the session
   fastify.post('/leave', async (request, reply) => {
     const userId = (request as any).userId as number;
-    removeOperator(userId);
+    const operator = getOperator(userId);
 
+    // If they were bridged into a call, run the disconnect / failover flow
+    // so the contact gets a graceful "we'll follow up" message instead of
+    // dead air. handleOperatorDisconnect already broadcasts offline status.
+    if (operator?.bridgedToCallId) {
+      try {
+        await handleOperatorDisconnect(operator);
+      } catch (err: any) {
+        console.error('[dialer] leave failover failed:', err?.message ?? err);
+      }
+      removeOperator(userId);
+      return { status: 'left' };
+    }
+
+    removeOperator(userId);
     broadcast({
       type: 'operator_status_changed',
       data: { operatorId: userId, availability: 'offline' },
@@ -193,6 +236,65 @@ export const dialerRoutes: FastifyPluginAsync = async (fastify) => {
       data: { operatorId: userId, availability: 'wrap_up' },
     });
     return { status: 'wrap_up' };
+  });
+
+  // Play a recording on the live call leg — operator soundboard
+  fastify.post('/play-recording', async (request, reply) => {
+    const userId = (request as any).userId as number;
+    const body = validate(PlayRecordingSchema, request.body, reply);
+    if (!body) return;
+    const { callControlId, recordingId } = body;
+
+    // Verify caller owns the call (must be the assigned operator)
+    const call = getInFlightCall(callControlId);
+    if (!call) return reply.code(404).send({ error: 'Call not found.' });
+    if (call.assignedOperatorId !== userId) {
+      return reply.code(403).send({ error: 'You are not the assigned operator on this call.' });
+    }
+
+    const recording = await db
+      .select()
+      .from(recordings)
+      .where(eq(recordings.id, recordingId))
+      .get();
+    if (!recording) return reply.code(404).send({ error: 'Recording not found.' });
+
+    try {
+      const provider = await getProvider();
+      const audioUrl = `${config.WEBHOOK_BASE_URL}${recording.filePath}`;
+      const clientState = JSON.stringify({
+        campaignId: getTeamSession().campaignId,
+        contactId: call.contactId,
+        playbackType: 'soundboard',
+      });
+      await provider.playAudio(callControlId, audioUrl, clientState);
+      return { status: 'playing', recordingId };
+    } catch (err: any) {
+      return reply.code(500).send({ error: err.message });
+    }
+  });
+
+  // Speak text on the live call leg via Telnyx TTS — operator AI message box
+  fastify.post('/speak', async (request, reply) => {
+    const userId = (request as any).userId as number;
+    const body = validate(SpeakSchema, request.body, reply);
+    if (!body) return;
+    const { callControlId, text, voice } = body;
+
+    // Verify caller owns the call (must be the assigned operator)
+    const call = getInFlightCall(callControlId);
+    if (!call) return reply.code(404).send({ error: 'Call not found.' });
+    if (call.assignedOperatorId !== userId) {
+      return reply.code(403).send({ error: 'You are not the assigned operator on this call.' });
+    }
+
+    try {
+      const provider = await getProvider();
+      await provider.speak(callControlId, text, voice);
+      return { status: 'speaking' };
+    } catch (err: any) {
+      return reply.code(500).send({ error: err.message });
+    }
   });
 
   // Stop playback and unmute operator — "Stop & Talk" button

@@ -36,6 +36,7 @@ OpenDialer is a **browser-based power dialer** you self-host on your own infrast
 - 🎯 **Auto-routing** — human-answered calls auto-route to the first available operator (FIFO fairness)
 - 🤖 **Answering Machine Detection (AMD)** — automatically detects voicemail vs. human
 - 📬 **Pre-recorded voicemail drops** — drops your message after the beep, no operator action needed
+- 🛡️ **Failover recording on operator disconnect** — if an operator drops mid-call (browser crash, network glitch, or clicks Leave), a per-campaign "we got cut off, we'll call you right back" recording auto-plays to the contact instead of leaving them with dead air
 - 🎙️ **Per-operator recording profiles** — each team member has their own opener & voicemail recordings
 - 🎧 **Auto-bridge via WebRTC** — operators are connected into live calls automatically
 - ⏭️ **Auto-advance through contact lists** — voicemails are fully automatic
@@ -55,6 +56,21 @@ OpenDialer is a **browser-based power dialer** you self-host on your own infrast
 
 You bring your own Telnyx account. You pay only for minutes used (~$0.01-0.02/min). No per-seat fees, no vendor lock-in.
 
+### 🩺 Real-world use cases
+
+OpenDialer is most useful for **B2B outbound calling** where the same script gets repeated dozens of times a day to a small set of business numbers. The original design target is **medical billing and revenue-cycle teams**, where calls to insurance companies and other providers are routine, repetitive, and currently consume hours of staff time per day.
+
+Concrete examples of teams already running this kind of workflow:
+
+- **Insurance claim status follow-up** — billers calling Aetna / Anthem / UnitedHealth / BCBS / Cigna / Humana to chase claim status, denials, and appeal updates. Pre-recorded openers introduce the patient/policy/claim numbers, the operator takes over for clarification when needed.
+- **Eligibility & benefits verification** — calling payer customer service for cases EDI 270/271 doesn't fully cover (out-of-network providers, complex benefit lookups, prior auth status).
+- **Prior authorization tracking** — repetitive callbacks to payer prior-auth lines waiting for status updates on submitted requests.
+- **Provider-to-provider coordination** — referring offices calling specialists to coordinate care, request medical records, or schedule consults.
+- **Pharmacy & DME follow-up** — calling pharmacies, DME suppliers, and lab partners to coordinate prescriptions, equipment delivery, and test results.
+- **Outbound sales to verified business contacts** with prior consent — SDR teams calling lists of opted-in B2B leads for warm outreach.
+
+What it is **not** designed for: cold-calling consumers, dropping voicemails to residential numbers without consent, or any other use case that triggers TCPA's residential / cell-phone prerecorded-voice rules. See the [Compliance & Legal](#%EF%B8%8F-compliance--legal) section.
+
 ---
 
 ## ✨ Features
@@ -68,7 +84,7 @@ Create calling campaigns with contact lists, opener recordings, and voicemail dr
 - **Status tracking** — pending, voicemail left, connected, callback, not interested, DNC
 
 ### 🎵 Recording Management
-Upload MP3/WAV files for opener messages and voicemail drops. Preview recordings in-browser. A/B test different messages across campaigns.
+Upload MP3/WAV files for opener messages, voicemail drops, and failover (operator-disconnect) messages. Preview recordings in-browser. A/B test different messages across campaigns.
 
 ### 📞 Power Dialer (Team Mode)
 The main screen — your team sits with headsets on:
@@ -99,9 +115,14 @@ The main screen — your team sits with headsets on:
 - **CSV export**: contacts, call logs, campaign summaries — import into any CRM or spreadsheet
 
 ### Call Transcription
-Two paths for transcribing calls — see [docs/transcription.md](docs/transcription.md) for full details:
-- **Telnyx Built-in** — real-time transcription via Telnyx's API ($0.025/min), zero infrastructure, 4 engine choices (Telnyx, Google, Deepgram, Azure)
-- **Bring Your Own STT** — stream raw call audio via WebSocket to any provider (Deepgram, OpenAI Whisper, AssemblyAI, etc.)
+Three modes per campaign — see [docs/transcription.md](docs/transcription.md) for full details:
+- **Off** — no transcription. $0. Recordings still saved.
+- **Live (real-time)** — stream during the call. ~$0.025/min via Telnyx, or BYO STT (Deepgram, AssemblyAI, self-hosted Whisper). Best for live coaching.
+- **After call (batch)** — transcribe the recording after hangup. **~$0.006/min via OpenAI Whisper API or $0 via self-hosted Whisper.** Best for review/audit. **76% cheaper than real-time.**
+
+**Re-transcribe button** — every call has a "Re-transcribe" button on the Transcription page that re-runs STT against the saved recording. Useful if a job fails, the server restarts mid-transcription, or you upgrade to a better Whisper model and want to re-run old calls.
+
+For HIPAA workflows, use the self-hosted Whisper option **plus** set `RECORDING_STORAGE=local` so audio is downloaded into the persistent `uploads/` volume on your own server instead of staying on Telnyx's CDN. Audio then never leaves your infrastructure end-to-end.
 
 ### Authentication & Security
 - **Multi-user auth** — email + password login with bcrypt hashing, admin and operator roles
@@ -540,7 +561,7 @@ opendialer/
 |-------|---------|------------|
 | `settings` | Key-value config store | API keys, webhook URL, provider |
 | `users` | Team members | email, name, passwordHash, mfaSecret, role, sipUsername, sipPassword |
-| `campaigns` | Calling campaigns | name, caller ID, recording IDs, transcription config, status |
+| `campaigns` | Calling campaigns | name, caller ID, opener/voicemail/failover recording IDs, transcription config, status |
 | `contacts` | Contact lists per campaign | name, phone (E.164), company, status |
 | `recordings` | Uploaded audio files | name, type (opener/voicemail), file path, userId |
 | `recording_profiles` | Per-user recording combos | userId, opener + voicemail IDs, isDefault |
@@ -548,6 +569,8 @@ opendialer/
 | `transcripts` | Call transcription lines | call log ID, speaker, content, confidence |
 
 ### API Endpoints
+
+🔒 = admin role required. All `/api/*` routes (except `/api/auth/*` and `/api/health`) require an authenticated session.
 
 | Method | Endpoint | Description |
 |--------|----------|-------------|
@@ -559,35 +582,51 @@ opendialer/
 | `GET` | `/api/auth/mfa-setup` | Get MFA QR code |
 | `POST` | `/api/auth/verify-mfa` | Verify MFA setup code |
 | `GET` | `/api/auth/workos` | Redirect to WorkOS SSO |
-| | **Users (admin)** | |
-| `GET` | `/api/users` | List all users |
-| `POST` | `/api/users` | Create user |
-| `PUT` | `/api/users/:id` | Update user |
-| `DELETE` | `/api/users/:id` | Delete user |
-| `POST` | `/api/users/:id/reset-password` | Reset user password |
-| `GET` | `/api/users/me` | Current user profile |
+| `GET` | `/api/auth/workos/callback` | WorkOS SSO callback |
+| `POST` | `/api/auth/logout` | Sign out, clear session |
+| | **Users** | |
+| `GET` | `/api/users/me` | Current user profile (any authenticated user) |
+| `GET` | `/api/users` 🔒 | List all users |
+| `POST` | `/api/users` 🔒 | Create user |
+| `PUT` | `/api/users/:id` 🔒 | Update user |
+| `DELETE` | `/api/users/:id` 🔒 | Delete user |
+| `POST` | `/api/users/:id/reset-password` 🔒 | Reset user password |
 | | **Campaigns** | |
 | `GET` | `/api/campaigns` | List campaigns with contact counts |
+| `GET` | `/api/campaigns/:id` | Get a single campaign |
 | `POST` | `/api/campaigns` | Create campaign |
+| `PUT` | `/api/campaigns/:id` | Update campaign |
+| `DELETE` | `/api/campaigns/:id` | Delete campaign (cascades to contacts) |
 | | **Contacts** | |
-| `GET` | `/api/contacts?campaignId=X` | List contacts |
+| `GET` | `/api/contacts?campaignId=X` | List contacts (optionally filtered by campaign) |
+| `GET` | `/api/contacts/:id` | Get single contact |
+| `POST` | `/api/contacts` | Create single contact |
 | `POST` | `/api/contacts/bulk` | Bulk import contacts (JSON) |
+| `PUT` | `/api/contacts/:id` | Update contact (e.g. status, notes) |
+| `DELETE` | `/api/contacts/:id` | Delete contact |
 | | **Recordings & Profiles** | |
+| `GET` | `/api/recordings?type=opener\|voicemail` | List recordings (optionally filtered) |
 | `POST` | `/api/recordings` | Upload audio file (multipart) |
+| `DELETE` | `/api/recordings/:id` | Delete a recording |
 | `GET` | `/api/recording-profiles` | List user's recording profiles |
 | `POST` | `/api/recording-profiles` | Create profile |
+| `PUT` | `/api/recording-profiles/:id` | Update profile |
 | `PUT` | `/api/recording-profiles/:id/activate` | Set profile as active |
+| `DELETE` | `/api/recording-profiles/:id` | Delete profile |
 | | **Dialer** | |
-| `POST` | `/api/dialer/start` | Start dialing session (admin) |
-| `POST` | `/api/dialer/stop` | Stop session (admin) |
-| `POST` | `/api/dialer/pause` | Pause auto-advance |
-| `POST` | `/api/dialer/resume` | Resume auto-advance |
+| `POST` | `/api/dialer/start` 🔒 | Start dialing session |
+| `POST` | `/api/dialer/stop` 🔒 | Stop session |
+| `POST` | `/api/dialer/pause` 🔒 | Pause auto-advance |
+| `POST` | `/api/dialer/resume` 🔒 | Resume auto-advance |
 | `POST` | `/api/dialer/join` | Operator joins session |
 | `POST` | `/api/dialer/leave` | Operator leaves session |
 | `POST` | `/api/dialer/register-webrtc` | Register operator's WebRTC leg |
 | `POST` | `/api/dialer/set-available` | Operator ready for next call |
 | `POST` | `/api/dialer/set-wrap-up` | Operator in wrap-up mode |
 | `POST` | `/api/dialer/jump-in` | Manual bridge into call |
+| `POST` | `/api/dialer/stop-and-talk` | Stop playback and unmute operator |
+| `POST` | `/api/dialer/play-recording` | Soundboard — play a recording into the live call (assigned operator only) |
+| `POST` | `/api/dialer/speak` | TTS — speak text into the live call (assigned operator only) |
 | `POST` | `/api/dialer/skip` | Skip/hangup a call |
 | `GET` | `/api/dialer/status` | Team session status (operators, in-flight calls) |
 | `GET` | `/api/dialer/webrtc-credentials` | Get operator's SIP credentials for WebRTC |
@@ -599,7 +638,19 @@ opendialer/
 | | **Transcripts** | |
 | `GET` | `/api/transcripts?callLogId=X` | Get transcripts for a call |
 | `GET` | `/api/transcripts/campaign/:id` | Get all transcripts for a campaign |
+| `DELETE` | `/api/transcripts/:id` | Delete a transcript line |
+| `POST` | `/api/transcripts/retranscribe` | Re-run STT against a call's saved recording |
+| | **Settings** | |
+| `GET` | `/api/settings` 🔒 | Get all settings as key-value object |
+| `PUT` | `/api/settings` 🔒 | Upsert settings (whitelisted keys only) |
+| `GET` | `/api/settings/health` 🔒 | Provider connectivity check |
+| | **Integrations** | |
+| `GET` | `/api/integrations/hubspot/test` | Test HubSpot connection |
+| `POST` | `/api/integrations/hubspot/import` | Import contacts from HubSpot into a campaign |
+| `POST` | `/api/integrations/hubspot/log-call` | Push a call log to HubSpot |
+| `POST` | `/api/integrations/webhook/test` | Send a test event to the configured outbound webhook |
 | | **System** | |
+| `GET` | `/api/health` | Health check (no auth) |
 | `POST` | `/webhooks/telnyx` | Telnyx webhook receiver (signature verified) |
 | `GET` | `/events` | SSE stream (per-user targeted) |
 
@@ -718,6 +769,62 @@ pnpm dev
 ```
 
 The Vite dev server proxies API calls to the Fastify backend automatically.
+
+---
+
+## ⚖️ Compliance & Legal
+
+> **Read this before pointing OpenDialer at a real phone number.**
+
+OpenDialer is **software**, not a service or a legal product. The maintainers and contributors do not run the calls, do not see the data, and have **no relationship with the people you call**. Everything you do with this tool is your own responsibility under your own jurisdiction's laws.
+
+### No warranty, no liability
+
+This project is licensed under **AGPL-3.0**, which includes the standard "AS IS, WITHOUT WARRANTY OF ANY KIND" clause (see the [LICENSE](LICENSE) file). To make the intent unmistakable:
+
+> **The OpenDialer maintainers, contributors, and AIIVARS LLC are not liable for any legal damages, regulatory penalties, fines, civil judgments, or any other consequences arising from your use of this software. You — the operator — are solely responsible for compliance with all applicable laws and regulations in every jurisdiction you make calls into or from.**
+
+This software is provided as a tool. It does not provide legal advice. It does not check your compliance for you. It does not know who you are calling or whether you have permission. **If you operate it, you are the "telemarketer," "seller," "covered entity," or other legally-defined role under whatever rules apply to your situation — not us.**
+
+If you are unsure whether your intended use is lawful, **consult a licensed attorney** in your jurisdiction. A telecom / TCPA attorney for general outbound calling, a healthcare-data attorney if you are handling Protected Health Information.
+
+### What you are responsible for
+
+Depending on your use case, this list may include (but is not limited to):
+
+- **Telephone Consumer Protection Act (TCPA)** compliance, including prior express written consent (PEWC) for any pre-recorded or AI-generated voice content delivered to residential phones or cell phones
+- **National Do Not Call Registry** scrubbing for telemarketing calls to residential numbers
+- **State mini-TCPA laws** (Florida FTSA, Oklahoma OTSA, Maryland SB 90, Washington CEMA, and others) which may impose stricter rules than federal TCPA
+- **Calling-hour restrictions** (federal 8 AM – 9 PM local time, plus stricter state windows)
+- **All-party consent recording laws** in CA, CT, DE, FL, IL, MD, MA, MI, MT, NV, NH, OR, PA, VT, WA — playing a "this call may be recorded" disclosure before the recording starts is your responsibility
+- **HIPAA Privacy and Security Rules** if you handle Protected Health Information, including obtaining a signed **Business Associate Agreement (BAA) with Telnyx** before any PHI flows through their network
+- **STIR/SHAKEN attestation** — using Telnyx-owned caller IDs to maintain A-attestation and avoid spam labeling
+- **State and federal debt collection laws** (FDCPA and state equivalents) if used for any kind of collections
+- **GDPR / UK GDPR / PIPEDA / state privacy laws** if you call or store data on individuals in those jurisdictions
+- **Anti-spam laws** in any country you call into
+
+### What OpenDialer does NOT do for you
+
+- ❌ Does **not** scrub against the federal Do Not Call Registry
+- ❌ Does **not** enforce calling-hour restrictions by called party time zone
+- ❌ Does **not** verify or store TCPA consent records
+- ❌ Does **not** automatically play a recording disclosure before recording starts
+- ❌ Does **not** sign Business Associate Agreements on your behalf
+- ❌ Does **not** filter PHI from logs, transcripts, or notes
+- ❌ Does **not** know what country, state, or jurisdiction the called number belongs to
+
+If any of these matter to you, **you need to handle them outside the dialer** — either by curating your contact list before upload, using your own scrubbing service, configuring operational policies, or modifying the source code (it's open — patches welcome).
+
+### Accept-or-don't-use
+
+By installing, running, or modifying OpenDialer, you accept that:
+
+1. You have read and understood this section.
+2. You are responsible for the legality of your calling operation.
+3. You will not pursue the maintainers, contributors, or AIIVARS LLC for any consequence of your use of this software.
+4. You will obtain independent legal advice for your specific situation before operating this in production.
+
+If you do not accept these terms, do not use this software.
 
 ---
 

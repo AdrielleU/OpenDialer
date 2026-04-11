@@ -9,6 +9,8 @@ export default function SettingsPage() {
     TELNYX_CONNECTION_ID: '',
     TELNYX_PHONE_NUMBER: '',
     WEBHOOK_BASE_URL: '',
+    OPENAI_API_KEY: '',
+    WHISPER_BATCH_URL: '',
   });
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
@@ -121,6 +123,46 @@ export default function SettingsPage() {
             />
             <p className="text-xs text-gray-600 mt-1">
               Public URL where Telnyx sends webhook events. Use ngrok for local dev.
+            </p>
+          </div>
+        </div>
+
+        {/* Transcription (post-call batch) */}
+        <div className="bg-gray-900 border border-gray-800 rounded-lg p-4 space-y-4">
+          <h2 className="text-sm font-semibold text-gray-400 uppercase tracking-wider">
+            Transcription (Post-Call Batch)
+          </h2>
+          <p className="text-xs text-gray-500 -mt-2">
+            Configure either provider to enable the "After call" transcription mode on
+            campaigns. Self-hosted Whisper is preferred for HIPAA workflows.
+          </p>
+          <div>
+            <label className="block text-sm text-gray-400 mb-1">
+              OpenAI API Key
+              <span className="text-xs text-gray-600 ml-2">(~$0.006/min, no BAA)</span>
+            </label>
+            <input
+              type="password"
+              value={settings.OPENAI_API_KEY}
+              onChange={(e) => setSettings({ ...settings, OPENAI_API_KEY: e.target.value })}
+              className="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm font-mono"
+              placeholder="sk-..."
+            />
+          </div>
+          <div>
+            <label className="block text-sm text-gray-400 mb-1">
+              Self-hosted Whisper URL
+              <span className="text-xs text-gray-600 ml-2">($0/min, HIPAA-safe)</span>
+            </label>
+            <input
+              value={settings.WHISPER_BATCH_URL}
+              onChange={(e) => setSettings({ ...settings, WHISPER_BATCH_URL: e.target.value })}
+              className="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm"
+              placeholder="http://whisper:9000/asr"
+            />
+            <p className="text-xs text-gray-600 mt-1">
+              HTTP endpoint for whisper.cpp or openai-whisper-asr-webservice. Audio never
+              leaves your network.
             </p>
           </div>
         </div>

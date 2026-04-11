@@ -115,3 +115,102 @@ describe('Dialer Auth', () => {
     expect(res.statusCode).toBe(401);
   });
 });
+
+describe('Dialer Soundboard — play-recording', () => {
+  it('rejects invalid body with 400', async () => {
+    const res = await app.inject({
+      method: 'POST',
+      url: '/api/dialer/play-recording',
+      headers: { cookie: authCookie() },
+      payload: { callControlId: '', recordingId: -1 },
+    });
+    expect(res.statusCode).toBe(400);
+  });
+
+  it('returns 404 when call does not exist', async () => {
+    const res = await app.inject({
+      method: 'POST',
+      url: '/api/dialer/play-recording',
+      headers: { cookie: authCookie() },
+      payload: { callControlId: 'nonexistent-call-id', recordingId: 1 },
+    });
+    expect(res.statusCode).toBe(404);
+  });
+
+  it('returns 403 when caller is not the assigned operator', async () => {
+    const { addInFlightCall, updateInFlightCall, removeInFlightCall } = await import(
+      '../dialer/team-state.js'
+    );
+    addInFlightCall('test-call-not-mine', 1);
+    // Assign a DIFFERENT operator (TEST_USER_ID is the admin we're auth'd as).
+    updateInFlightCall('test-call-not-mine', { assignedOperatorId: 99999 });
+
+    const res = await app.inject({
+      method: 'POST',
+      url: '/api/dialer/play-recording',
+      headers: { cookie: authCookie() },
+      payload: { callControlId: 'test-call-not-mine', recordingId: 1 },
+    });
+    expect(res.statusCode).toBe(403);
+
+    removeInFlightCall('test-call-not-mine');
+  });
+
+  it('returns 404 when recording does not exist for valid call owner', async () => {
+    const { addInFlightCall, updateInFlightCall, removeInFlightCall } = await import(
+      '../dialer/team-state.js'
+    );
+    addInFlightCall('test-call-mine', 1);
+    updateInFlightCall('test-call-mine', { assignedOperatorId: TEST_USER_ID });
+
+    const res = await app.inject({
+      method: 'POST',
+      url: '/api/dialer/play-recording',
+      headers: { cookie: authCookie() },
+      payload: { callControlId: 'test-call-mine', recordingId: 99999 },
+    });
+    expect(res.statusCode).toBe(404);
+
+    removeInFlightCall('test-call-mine');
+  });
+});
+
+describe('Dialer Soundboard — speak (TTS)', () => {
+  it('rejects empty text with 400', async () => {
+    const res = await app.inject({
+      method: 'POST',
+      url: '/api/dialer/speak',
+      headers: { cookie: authCookie() },
+      payload: { callControlId: 'foo', text: '' },
+    });
+    expect(res.statusCode).toBe(400);
+  });
+
+  it('returns 404 when call does not exist', async () => {
+    const res = await app.inject({
+      method: 'POST',
+      url: '/api/dialer/speak',
+      headers: { cookie: authCookie() },
+      payload: { callControlId: 'no-such-call', text: 'Hello there' },
+    });
+    expect(res.statusCode).toBe(404);
+  });
+
+  it('returns 403 when caller is not the assigned operator', async () => {
+    const { addInFlightCall, updateInFlightCall, removeInFlightCall } = await import(
+      '../dialer/team-state.js'
+    );
+    addInFlightCall('test-speak-not-mine', 1);
+    updateInFlightCall('test-speak-not-mine', { assignedOperatorId: 99999 });
+
+    const res = await app.inject({
+      method: 'POST',
+      url: '/api/dialer/speak',
+      headers: { cookie: authCookie() },
+      payload: { callControlId: 'test-speak-not-mine', text: 'Hello' },
+    });
+    expect(res.statusCode).toBe(403);
+
+    removeInFlightCall('test-speak-not-mine');
+  });
+});

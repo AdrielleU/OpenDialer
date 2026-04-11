@@ -129,7 +129,11 @@ export const api = {
   recordings: {
     list: (type?: string) =>
       request<Recording[]>(type ? `/recordings?type=${type}` : '/recordings'),
-    upload: async (file: File, name: string, type: 'opener' | 'voicemail'): Promise<Recording> => {
+    upload: async (
+      file: File,
+      name: string,
+      type: 'opener' | 'voicemail' | 'failover',
+    ): Promise<Recording> => {
       const formData = new FormData();
       formData.append('file', file);
       formData.append('name', name);
@@ -173,6 +177,11 @@ export const api = {
       request<CallTranscript[]>(`/transcripts/campaign/${campaignId}`),
     byCallLog: (callLogId: number) =>
       request<CallTranscript[]>(`/transcripts?callLogId=${callLogId}`),
+    retranscribe: (callLogId: number, force = false) =>
+      request<{ status: string; lines: number }>(`/transcripts/retranscribe`, {
+        method: 'POST',
+        body: JSON.stringify({ callLogId, force }),
+      }),
   },
 
   users: {
@@ -238,6 +247,16 @@ export const api = {
       request('/dialer/stop-and-talk', {
         method: 'POST',
         body: JSON.stringify({ callControlId }),
+      }),
+    playRecording: (callControlId: string, recordingId: number) =>
+      request('/dialer/play-recording', {
+        method: 'POST',
+        body: JSON.stringify({ callControlId, recordingId }),
+      }),
+    speak: (callControlId: string, text: string, voice?: string) =>
+      request('/dialer/speak', {
+        method: 'POST',
+        body: JSON.stringify({ callControlId, text, voice }),
       }),
     webrtcCredentials: () =>
       request<{ login: string; password: string }>('/dialer/webrtc-credentials'),

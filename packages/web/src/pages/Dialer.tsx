@@ -5,6 +5,7 @@ import { useTelnyxClient } from '../hooks/useTelnyxClient';
 import { useUser } from '../App';
 import OperatorStatusPanel from '../components/OperatorStatusPanel';
 import IncomingCallCard from '../components/IncomingCallCard';
+import Soundboard from '../components/Soundboard';
 import type { Campaign, Contact, DialerStatus, OperatorAvailability } from '../types';
 import {
   Phone,
@@ -511,7 +512,13 @@ export default function Dialer() {
           )}
 
           {!isAdmin && hasJoined && ws.routedCall && (
-            <IncomingCallCard routedCall={ws.routedCall} />
+            <>
+              <IncomingCallCard routedCall={ws.routedCall} />
+              <Soundboard
+                callControlId={ws.routedCall.callControlId}
+                contactName={ws.routedCall.contactName}
+              />
+            </>
           )}
 
           {!isAdmin &&

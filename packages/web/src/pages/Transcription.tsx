@@ -1,13 +1,42 @@
 import { useState, useEffect } from 'react';
 import { api } from '../lib/api';
 import type { Campaign, CallTranscript } from '../types';
-import { MessageSquareText, ChevronDown, ChevronRight, Mic, User, Zap, Globe } from 'lucide-react';
+import {
+  MessageSquareText,
+  ChevronDown,
+  ChevronRight,
+  Mic,
+  User,
+  Zap,
+  Globe,
+  RefreshCw,
+} from 'lucide-react';
 
 const engineLabels: Record<string, { name: string; description: string }> = {
   telnyx: { name: 'Telnyx', description: 'Best value — $0.025/min, low latency' },
   google: { name: 'Google', description: 'Supports interim results — $0.05/min' },
   deepgram: { name: 'Deepgram', description: 'Nova-2/Nova-3 models, high accuracy' },
   azure: { name: 'Azure', description: 'Strong multilingual and accent support' },
+};
+
+type TranscriptionMode = 'off' | 'realtime' | 'post_call';
+
+const modeLabels: Record<TranscriptionMode, { name: string; cost: string; description: string }> = {
+  off: {
+    name: 'Off',
+    cost: '$0',
+    description: 'No transcription. Recordings are still saved.',
+  },
+  realtime: {
+    name: 'Live (real-time)',
+    cost: '~$0.025/min',
+    description: 'See transcripts during the call. Best for live coaching / supervision.',
+  },
+  post_call: {
+    name: 'After call (batch)',
+    cost: '~$0.006/min cloud, $0 self-hosted',
+    description: 'Transcribe the recording after hangup — much cheaper, slight delay.',
+  },
 };
 
 export default function Transcription() {
@@ -18,15 +47,45 @@ export default function Transcription() {
   const [loading, setLoading] = useState(false);
   const [configCampaignId, setConfigCampaignId] = useState<number | null>(null);
   const [configForm, setConfigForm] = useState({
-    enableTranscription: false,
+    transcriptionMode: 'off' as TranscriptionMode,
     transcriptionEngine: 'telnyx',
     sttProvider: '',
     sttApiKey: '',
   });
+  const [serverSettings, setServerSettings] = useState<Record<string, string>>({});
   const [saving, setSaving] = useState(false);
+  const [retranscribingId, setRetranscribingId] = useState<number | null>(null);
+
+  const refetchTranscripts = () => {
+    if (selectedCampaignId) {
+      api.transcripts
+        .byCampaign(selectedCampaignId)
+        .then(setTranscripts)
+        .catch(console.error);
+    }
+  };
+
+  const handleRetranscribe = async (callLogId: number) => {
+    if (
+      !confirm(
+        'Re-transcribe this call? Existing transcript lines will be replaced.',
+      )
+    )
+      return;
+    setRetranscribingId(callLogId);
+    try {
+      await api.transcripts.retranscribe(callLogId, true);
+      refetchTranscripts();
+    } catch (err: any) {
+      alert(`Re-transcribe failed: ${err.message}`);
+    }
+    setRetranscribingId(null);
+  };
 
   useEffect(() => {
     api.campaigns.list().then(setCampaigns).catch(console.error);
+    // Load settings to know which post-call providers are configured
+    api.settings.get().then(setServerSettings).catch(() => {});
   }, []);
 
   useEffect(() => {
@@ -38,8 +97,14 @@ export default function Transcription() {
 
   const openConfig = (campaign: Campaign) => {
     setConfigCampaignId(campaign.id);
+    // Migrate legacy enableTranscription → realtime mode if no explicit mode set
+    const legacyMode: TranscriptionMode = (campaign as any).transcriptionMode
+      ? (campaign as any).transcriptionMode
+      : (campaign as any).enableTranscription
+        ? 'realtime'
+        : 'off';
     setConfigForm({
-      enableTranscription: (campaign as any).enableTranscription ?? false,
+      transcriptionMode: legacyMode,
       transcriptionEngine: (campaign as any).transcriptionEngine ?? 'telnyx',
       sttProvider: (campaign as any).sttProvider ?? '',
       sttApiKey: (campaign as any).sttApiKey ?? '',
@@ -50,7 +115,14 @@ export default function Transcription() {
     if (!configCampaignId) return;
     setSaving(true);
     try {
-      await api.campaigns.update(configCampaignId, configForm as any);
+      // Send the new mode plus the legacy boolean for backwards compat
+      await api.campaigns.update(configCampaignId, {
+        transcriptionMode: configForm.transcriptionMode,
+        enableTranscription: configForm.transcriptionMode === 'realtime',
+        transcriptionEngine: configForm.transcriptionEngine,
+        sttProvider: configForm.sttProvider || null,
+        sttApiKey: configForm.sttApiKey || null,
+      } as any);
       setCampaigns((prev) =>
         prev.map((c) => (c.id === configCampaignId ? { ...c, ...configForm } : c)),
       );
@@ -60,6 +132,10 @@ export default function Transcription() {
     }
     setSaving(false);
   };
+
+  const hasOpenAIKey = !!serverSettings.OPENAI_API_KEY;
+  const hasWhisperUrl = !!serverSettings.WHISPER_BATCH_URL;
+  const postCallReady = hasOpenAIKey || hasWhisperUrl;
 
   return (
     <div className="p-6 max-w-4xl">
@@ -112,23 +188,34 @@ export default function Transcription() {
               key={campaign.id}
               className="bg-gray-900 border border-gray-800 rounded-lg p-3 flex items-center justify-between"
             >
-              <div className="flex items-center gap-3">
-                <span
-                  className={`w-2 h-2 rounded-full ${
-                    (campaign as any).enableTranscription ? 'bg-emerald-500' : 'bg-gray-600'
-                  }`}
-                />
-                <div>
-                  <div className="font-medium text-sm">{campaign.name}</div>
-                  <div className="text-xs text-gray-500">
-                    {(campaign as any).sttProvider
-                      ? `BYO STT — ${(campaign as any).sttProvider === 'whisper' ? 'Self-hosted Whisper' : (campaign as any).sttProvider}`
-                      : (campaign as any).enableTranscription
-                        ? `Telnyx Built-in — ${engineLabels[(campaign as any).transcriptionEngine || 'telnyx']?.name || 'Telnyx'} engine`
-                        : 'Transcription OFF'}
+              {(() => {
+                const mode: TranscriptionMode =
+                  (campaign as any).transcriptionMode ??
+                  ((campaign as any).enableTranscription ? 'realtime' : 'off');
+                const dotColor =
+                  mode === 'off'
+                    ? 'bg-gray-600'
+                    : mode === 'realtime'
+                      ? 'bg-emerald-500'
+                      : 'bg-blue-500';
+                return (
+                  <div className="flex items-center gap-3">
+                    <span className={`w-2 h-2 rounded-full ${dotColor}`} />
+                    <div>
+                      <div className="font-medium text-sm">{campaign.name}</div>
+                      <div className="text-xs text-gray-500">
+                        {modeLabels[mode].name}
+                        {mode === 'realtime' && (campaign as any).sttProvider
+                          ? ` — BYO ${(campaign as any).sttProvider}`
+                          : mode === 'realtime'
+                            ? ` — ${engineLabels[(campaign as any).transcriptionEngine || 'telnyx']?.name || 'Telnyx'} engine`
+                            : ''}
+                        <span className="ml-2 text-gray-600">{modeLabels[mode].cost}</span>
+                      </div>
+                    </div>
                   </div>
-                </div>
-              </div>
+                );
+              })()}
               <button
                 onClick={() => openConfig(campaign)}
                 className="px-3 py-1.5 bg-gray-800 hover:bg-gray-700 rounded-lg text-xs transition-colors"
@@ -219,6 +306,20 @@ export default function Transcription() {
 
               {expandedCall === t.callLogId && (
                 <div className="border-t border-gray-800 p-4 space-y-3">
+                  <div className="flex justify-end">
+                    <button
+                      onClick={() => handleRetranscribe(t.callLogId)}
+                      disabled={retranscribingId === t.callLogId}
+                      className="flex items-center gap-1.5 px-3 py-1.5 bg-gray-800 hover:bg-gray-700 disabled:opacity-50 border border-gray-700 rounded-lg text-xs transition-colors"
+                      title="Re-run STT against the saved recording. Replaces existing transcript lines."
+                    >
+                      <RefreshCw
+                        size={12}
+                        className={retranscribingId === t.callLogId ? 'animate-spin' : ''}
+                      />
+                      {retranscribingId === t.callLogId ? 'Transcribing...' : 'Re-transcribe'}
+                    </button>
+                  </div>
                   {t.lines.map((line) => (
                     <div key={line.id} className="flex gap-3">
                       <div
@@ -271,23 +372,74 @@ export default function Transcription() {
               </span>
             </p>
 
-            {/* Enable toggle */}
-            <label className="flex items-center gap-3 cursor-pointer">
-              <input
-                type="checkbox"
-                checked={configForm.enableTranscription}
-                onChange={(e) =>
-                  setConfigForm({ ...configForm, enableTranscription: e.target.checked })
-                }
-                className="accent-emerald-500 w-4 h-4"
-              />
-              <span className="text-sm font-medium">Enable real-time transcription</span>
-            </label>
-
-            {/* Engine selection */}
-            {configForm.enableTranscription && (
+            {/* Mode dropdown — primary control */}
+            <div>
+              <label className="block text-sm text-gray-400 mb-2">Transcription Mode</label>
               <div className="space-y-2">
-                <label className="block text-sm text-gray-400">Transcription Engine</label>
+                {(['off', 'post_call', 'realtime'] as const).map((mode) => {
+                  const isPostCall = mode === 'post_call';
+                  const disabled = isPostCall && !postCallReady;
+                  return (
+                    <label
+                      key={mode}
+                      className={`flex items-start gap-3 px-3 py-2.5 rounded-lg border transition-colors ${
+                        disabled
+                          ? 'border-gray-800 bg-gray-900 opacity-50 cursor-not-allowed'
+                          : configForm.transcriptionMode === mode
+                            ? 'border-emerald-500 bg-emerald-500/10 cursor-pointer'
+                            : 'border-gray-700 bg-gray-800 cursor-pointer hover:border-gray-600'
+                      }`}
+                    >
+                      <input
+                        type="radio"
+                        name="mode"
+                        value={mode}
+                        checked={configForm.transcriptionMode === mode}
+                        onChange={() => setConfigForm({ ...configForm, transcriptionMode: mode })}
+                        disabled={disabled}
+                        className="accent-emerald-500 mt-0.5"
+                      />
+                      <div className="min-w-0 flex-1">
+                        <div className="text-sm font-medium flex items-center justify-between gap-2">
+                          <span>{modeLabels[mode].name}</span>
+                          <span className="text-xs text-gray-500 shrink-0">
+                            {modeLabels[mode].cost}
+                          </span>
+                        </div>
+                        <div className="text-xs text-gray-500 mt-0.5">
+                          {modeLabels[mode].description}
+                        </div>
+                        {disabled && (
+                          <div className="text-xs text-yellow-500 mt-1">
+                            Set OPENAI_API_KEY or WHISPER_BATCH_URL in Settings to enable.
+                          </div>
+                        )}
+                      </div>
+                    </label>
+                  );
+                })}
+              </div>
+            </div>
+
+            {configForm.transcriptionMode === 'post_call' && (
+              <div className="text-xs text-gray-500 bg-gray-800/50 border border-gray-800 rounded-lg px-3 py-2">
+                Will use{' '}
+                <span className="text-gray-300">
+                  {hasWhisperUrl ? 'self-hosted Whisper' : 'OpenAI Whisper API'}
+                </span>
+                . Transcripts appear within ~30 seconds of hangup.
+                {!hasWhisperUrl && hasOpenAIKey && (
+                  <div className="mt-1 text-yellow-500">
+                    ⚠ OpenAI standard API does not sign HIPAA BAAs. Use self-hosted Whisper for PHI.
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* Engine selection — only for real-time mode */}
+            {configForm.transcriptionMode === 'realtime' && (
+              <div className="space-y-2">
+                <label className="block text-sm text-gray-400">Real-time Engine</label>
                 {Object.entries(engineLabels).map(([key, { name, description }]) => (
                   <label
                     key={key}
@@ -316,7 +468,8 @@ export default function Transcription() {
               </div>
             )}
 
-            {/* BYO STT — alternative to Telnyx built-in */}
+            {/* BYO STT — alternative to Telnyx built-in (real-time only) */}
+            {configForm.transcriptionMode === 'realtime' && (
             <div className="border-t border-gray-800 pt-4 mt-2">
               <label className="block text-sm text-gray-400 mb-2">
                 BYO STT Provider <span className="text-gray-600">(overrides Telnyx built-in)</span>
@@ -361,6 +514,7 @@ export default function Transcription() {
                 </div>
               )}
             </div>
+            )}
 
             <div className="flex gap-3 pt-2">
               <button

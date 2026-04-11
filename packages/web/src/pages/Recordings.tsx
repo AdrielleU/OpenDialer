@@ -6,7 +6,10 @@ import { Upload, Trash2, Play, Pause } from 'lucide-react';
 export default function Recordings() {
   const [recordings, setRecordings] = useState<Recording[]>([]);
   const [showUpload, setShowUpload] = useState(false);
-  const [uploadForm, setUploadForm] = useState({ name: '', type: 'opener' as 'opener' | 'voicemail' });
+  const [uploadForm, setUploadForm] = useState({
+    name: '',
+    type: 'opener' as 'opener' | 'voicemail' | 'failover',
+  });
   const [file, setFile] = useState<File | null>(null);
   const [uploading, setUploading] = useState(false);
   const [playingId, setPlayingId] = useState<number | null>(null);
@@ -23,7 +26,7 @@ export default function Recordings() {
       await api.recordings.upload(file, uploadForm.name || file.name, uploadForm.type);
       setShowUpload(false);
       setFile(null);
-      setUploadForm({ name: '', type: 'opener' });
+      setUploadForm({ name: '', type: uploadForm.type });
       load();
     } catch (err: any) {
       alert(err.message);
@@ -47,6 +50,7 @@ export default function Recordings() {
 
   const openers = recordings.filter((r) => r.type === 'opener');
   const voicemails = recordings.filter((r) => r.type === 'voicemail');
+  const failovers = recordings.filter((r) => r.type === 'failover');
 
   const RecordingSection = ({ title, items }: { title: string; items: Recording[] }) => (
     <div className="mb-8">
@@ -94,6 +98,7 @@ export default function Recordings() {
 
       <RecordingSection title="Opener Recordings" items={openers} />
       <RecordingSection title="Voicemail Drops" items={voicemails} />
+      <RecordingSection title="Failover Recordings" items={failovers} />
 
       {/* Upload modal */}
       {showUpload && (
@@ -112,7 +117,7 @@ export default function Recordings() {
             <div>
               <label className="block text-sm text-gray-400 mb-1">Type</label>
               <div className="flex gap-4">
-                {(['opener', 'voicemail'] as const).map((t) => (
+                {(['opener', 'voicemail', 'failover'] as const).map((t) => (
                   <label key={t} className="flex items-center gap-2 cursor-pointer">
                     <input
                       type="radio"

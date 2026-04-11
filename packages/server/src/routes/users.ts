@@ -1,14 +1,38 @@
 import type { FastifyPluginAsync } from 'fastify';
+import { z } from 'zod';
 import { db } from '../db/index.js';
 import { users } from '../db/schema.js';
 import { eq } from 'drizzle-orm';
 import bcrypt from 'bcryptjs';
 import { getProvider } from '../providers/index.js';
 import { config } from '../config.js';
+import { validate } from '../lib/validate.js';
+
+const CreateUserSchema = z.object({
+  email: z.string().email().max(254),
+  name: z.string().min(1).max(200),
+  password: z.string().min(8).max(200),
+  role: z.enum(['admin', 'operator']).optional(),
+});
+
+const UpdateUserSchema = z
+  .object({
+    email: z.string().email().max(254).optional(),
+    name: z.string().min(1).max(200).optional(),
+    role: z.enum(['admin', 'operator']).optional(),
+  })
+  .refine((v) => Object.keys(v).length > 0, { message: 'Nothing to update.' });
+
+const ResetPasswordSchema = z.object({
+  password: z.string().min(8).max(200),
+});
 
 export const userRoutes: FastifyPluginAsync = async (fastify) => {
-  // Require admin role for all routes
+  // Require admin role for all routes — except /me, which any authenticated
+  // user can call to read their own profile (used by the first-login wizard
+  // and the layout sidebar).
   fastify.addHook('onRequest', async (request, reply) => {
+    if (request.url === '/api/users/me') return;
     if ((request as any).userRole !== 'admin') {
       return reply.code(403).send({ error: 'Admin access required.' });
     }
@@ -32,23 +56,10 @@ export const userRoutes: FastifyPluginAsync = async (fastify) => {
   });
 
   // Create user
-  fastify.post<{
-    Body: { email: string; name: string; role?: 'admin' | 'operator'; password: string };
-  }>('/', async (request, reply) => {
-    const { email, name, role, password } = request.body as {
-      email: string;
-      name: string;
-      role?: 'admin' | 'operator';
-      password: string;
-    };
-
-    if (!email || !name || !password) {
-      return reply.code(400).send({ error: 'Email, name, and password are required.' });
-    }
-
-    if (password.length < 8) {
-      return reply.code(400).send({ error: 'Password must be at least 8 characters.' });
-    }
+  fastify.post('/', async (request, reply) => {
+    const body = validate(CreateUserSchema, request.body, reply);
+    if (!body) return;
+    const { email, name, role, password } = body;
 
     const existing = await db.select().from(users).where(eq(users.email, email)).get();
     if (existing) {
@@ -100,23 +111,20 @@ export const userRoutes: FastifyPluginAsync = async (fastify) => {
   });
 
   // Update user
-  fastify.put<{ Params: { id: string }; Body: { name?: string; role?: string; email?: string } }>(
+  fastify.put<{ Params: { id: string } }>(
     '/:id',
     async (request, reply) => {
       const id = Number(request.params.id);
-      const body = request.body as { name?: string; role?: string; email?: string };
+      const body = validate(UpdateUserSchema, request.body, reply);
+      if (!body) return;
 
       const user = await db.select().from(users).where(eq(users.id, id)).get();
       if (!user) return reply.code(404).send({ error: 'User not found.' });
 
       const updates: Record<string, unknown> = {};
-      if (body.name) updates.name = body.name;
-      if (body.role) updates.role = body.role;
-      if (body.email) updates.email = body.email;
-
-      if (Object.keys(updates).length === 0) {
-        return reply.code(400).send({ error: 'Nothing to update.' });
-      }
+      if (body.name !== undefined) updates.name = body.name;
+      if (body.role !== undefined) updates.role = body.role;
+      if (body.email !== undefined) updates.email = body.email;
 
       await db.update(users).set(updates).where(eq(users.id, id));
       const updated = await db.select().from(users).where(eq(users.id, id)).get();
@@ -130,15 +138,13 @@ export const userRoutes: FastifyPluginAsync = async (fastify) => {
   );
 
   // Reset user password (admin sets a temp password)
-  fastify.post<{ Params: { id: string }; Body: { password: string } }>(
+  fastify.post<{ Params: { id: string } }>(
     '/:id/reset-password',
     async (request, reply) => {
       const id = Number(request.params.id);
-      const { password } = request.body as { password: string };
-
-      if (!password || password.length < 8) {
-        return reply.code(400).send({ error: 'Password must be at least 8 characters.' });
-      }
+      const body = validate(ResetPasswordSchema, request.body, reply);
+      if (!body) return;
+      const { password } = body;
 
       const user = await db.select().from(users).where(eq(users.id, id)).get();
       if (!user) return reply.code(404).send({ error: 'User not found.' });

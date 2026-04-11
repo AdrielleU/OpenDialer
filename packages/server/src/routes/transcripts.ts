@@ -1,7 +1,15 @@
 import type { FastifyPluginAsync } from 'fastify';
+import { z } from 'zod';
 import { db } from '../db/index.js';
 import { transcripts, callLogs, contacts } from '../db/schema.js';
 import { eq } from 'drizzle-orm';
+import { transcribeCallRecording } from '../transcription/post-call.js';
+import { validate } from '../lib/validate.js';
+
+const RetranscribeSchema = z.object({
+  callLogId: z.number().int().positive(),
+  force: z.boolean().optional(),
+});
 
 export const transcriptRoutes: FastifyPluginAsync = async (fastify) => {
   // Get transcripts for a specific call log
@@ -91,5 +99,65 @@ export const transcriptRoutes: FastifyPluginAsync = async (fastify) => {
     const id = Number(request.params.id);
     await db.delete(transcripts).where(eq(transcripts.id, id));
     return reply.code(204).send();
+  });
+
+  // Retroactively transcribe a call's recording.
+  //
+  // Works regardless of the campaign's transcriptionMode — the only
+  // requirement is that the call has a recordingUrl. Useful for:
+  //   - calls that were never transcribed (campaign was 'off' at the time)
+  //   - calls where transcription failed mid-job (server crash)
+  //   - re-transcribing with a different STT model after upgrading
+  fastify.post('/retranscribe', async (request, reply) => {
+    const body = validate(RetranscribeSchema, request.body, reply);
+    if (!body) return;
+    const { callLogId, force } = body;
+
+    const callLog = await db
+      .select()
+      .from(callLogs)
+      .where(eq(callLogs.id, callLogId))
+      .get();
+    if (!callLog) return reply.code(404).send({ error: 'Call log not found.' });
+    if (!callLog.recordingUrl) {
+      return reply.code(400).send({ error: 'No recording exists for this call.' });
+    }
+
+    const existing = await db
+      .select()
+      .from(transcripts)
+      .where(eq(transcripts.callLogId, callLogId));
+    if (existing.length > 0 && !force) {
+      return reply.code(409).send({
+        error: 'Transcript already exists. Pass force=true to replace.',
+        existingCount: existing.length,
+      });
+    }
+
+    if (existing.length > 0 && force) {
+      await db.delete(transcripts).where(eq(transcripts.callLogId, callLogId));
+    }
+
+    // Run the transcription synchronously this time so the caller knows
+    // whether it succeeded — this endpoint is interactive (UI button), not
+    // fire-and-forget like the webhook path.
+    try {
+      await transcribeCallRecording(callLogId, callLog.recordingUrl);
+    } catch (err: any) {
+      return reply.code(500).send({ error: err?.message ?? 'Transcription failed' });
+    }
+
+    // Re-fetch to confirm we got something
+    const fresh = await db
+      .select()
+      .from(transcripts)
+      .where(eq(transcripts.callLogId, callLogId));
+    if (fresh.length === 0) {
+      return reply.code(500).send({
+        error: 'Transcription completed without producing any text. Check server logs.',
+      });
+    }
+
+    return { status: 'transcribed', lines: fresh.length };
   });
 };

@@ -90,7 +90,9 @@ export const dialerEngine = {
         connects: session.connects,
         started_at: session.sessionStartedAt,
         ended_at: new Date().toISOString(),
-      });
+      }).catch((err) =>
+        console.error('[engine] fireWebhook(session.completed) failed:', err?.message ?? err),
+      );
       return;
     }
 
@@ -307,16 +309,26 @@ export const dialerEngine = {
         .where(eq(campaigns.id, session.campaignId))
         .get();
 
-      if (campaign?.sttProvider && campaign?.sttApiKey) {
-        // BYO STT — stream audio to external provider via WebSocket relay
-        const streamUrl = `wss://${config.WEBHOOK_BASE_URL.replace(/^https?:\/\//, '')}/audio-stream`;
-        await provider.startStreaming(callControlId, streamUrl);
-      } else if (campaign?.enableTranscription) {
-        // Telnyx built-in transcription
-        await provider.startTranscription(callControlId, {
-          engine: (campaign.transcriptionEngine as any) || 'telnyx',
-          tracks: 'both',
-        });
+      // Real-time transcription branches: only run when the campaign explicitly
+      // asks for live streaming. The 'post_call' mode is handled later by the
+      // call.recording.saved webhook (no work needed here).
+      const wantsRealtime =
+        campaign?.transcriptionMode === 'realtime' ||
+        // Backwards compat: campaigns created before transcriptionMode existed
+        (campaign?.enableTranscription && !campaign?.transcriptionMode);
+
+      if (wantsRealtime) {
+        if (campaign?.sttProvider && campaign?.sttApiKey) {
+          // BYO STT — stream audio to external provider via WebSocket relay
+          const streamUrl = `wss://${config.WEBHOOK_BASE_URL.replace(/^https?:\/\//, '')}/audio-stream`;
+          await provider.startStreaming(callControlId, streamUrl);
+        } else {
+          // Telnyx built-in transcription
+          await provider.startTranscription(callControlId, {
+            engine: (campaign?.transcriptionEngine as any) || 'telnyx',
+            tracks: 'both',
+          });
+        }
       }
     } catch {
       // Don't fail the bridge if recording/transcription fails
@@ -373,7 +385,9 @@ export const dialerEngine = {
       connects: session.connects,
       started_at: session.sessionStartedAt,
       ended_at: new Date().toISOString(),
-    });
+    }).catch((err) =>
+      console.error('[engine] fireWebhook(session.completed) failed:', err?.message ?? err),
+    );
 
     resetTeamSession();
     broadcast({ type: 'session_status_changed', data: { status: 'stopped' } });
@@ -558,7 +572,10 @@ export const dialerEngine = {
       const webhookData = await buildCallWebhookData(callLog.id);
       if (webhookData) {
         const event = disposition === 'voicemail' ? 'voicemail.dropped' : 'call.completed';
-        fireWebhook(event, webhookData);
+        // Fire-and-forget — never let CRM webhook errors break the dial loop.
+        fireWebhook(event, webhookData).catch((err) =>
+          console.error('[engine] fireWebhook failed:', err?.message ?? err),
+        );
       }
       // Sync to HubSpot if configured
       logCallToHubspot(callLog.id).catch(() => {});
@@ -566,7 +583,11 @@ export const dialerEngine = {
 
     // Auto-advance if running
     if (session.status === 'running') {
-      setTimeout(() => this.dialNextBatch(), 500);
+      setTimeout(() => {
+        this.dialNextBatch().catch((err) =>
+          console.error('[engine] dialNextBatch failed:', err?.message ?? err),
+        );
+      }, 500);
     }
   },
 

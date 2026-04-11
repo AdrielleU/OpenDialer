@@ -1,5 +1,6 @@
 import type { FastifyPluginAsync, FastifyRequest } from 'fastify';
 import rateLimit from '@fastify/rate-limit';
+import { z } from 'zod';
 import { db } from '../db/index.js';
 import { users } from '../db/schema.js';
 import { eq } from 'drizzle-orm';
@@ -8,6 +9,27 @@ import bcrypt from 'bcryptjs';
 import { generateSecret, verifySync, generateURI } from 'otplib';
 import QRCode from 'qrcode';
 import { randomBytes } from 'node:crypto';
+import { validate } from '../lib/validate.js';
+
+const LoginSchema = z.object({
+  email: z.string().email().max(254),
+  password: z.string().min(1).max(200),
+});
+
+const LoginMfaSchema = z.object({
+  email: z.string().email().max(254),
+  password: z.string().min(1).max(200),
+  code: z.string().min(1).max(10),
+});
+
+const ChangePasswordSchema = z.object({
+  currentPassword: z.string().min(1).max(200),
+  newPassword: z.string().min(8).max(200),
+});
+
+const VerifyMfaSchema = z.object({
+  code: z.string().min(1).max(10),
+});
 
 export const SESSION_COOKIE = 'opendialer_session';
 const SESSION_MAX_AGE = 60 * 60 * 24; // 24 hours
@@ -92,11 +114,10 @@ export const authRoutes: FastifyPluginAsync = async (fastify) => {
   });
 
   // Login: email + password
-  fastify.post<{ Body: { email: string; password: string } }>('/login', async (request, reply) => {
-    const { email, password } = request.body as { email: string; password: string };
-    if (!email || !password) {
-      return reply.code(400).send({ error: 'Email and password required.' });
-    }
+  fastify.post('/login', async (request, reply) => {
+    const body = validate(LoginSchema, request.body, reply);
+    if (!body) return;
+    const { email, password } = body;
 
     const user = await db.select().from(users).where(eq(users.email, email)).get();
     if (!user) {
@@ -130,35 +151,30 @@ export const authRoutes: FastifyPluginAsync = async (fastify) => {
   });
 
   // MFA verification during login
-  fastify.post<{ Body: { email: string; password: string; code: string } }>(
-    '/login/mfa',
-    async (request, reply) => {
-      const { email, password, code } = request.body as {
-        email: string;
-        password: string;
-        code: string;
-      };
+  fastify.post('/login/mfa', async (request, reply) => {
+    const body = validate(LoginMfaSchema, request.body, reply);
+    if (!body) return;
+    const { email, password, code } = body;
 
-      const user = await db.select().from(users).where(eq(users.email, email)).get();
-      if (!user || !(await bcrypt.compare(password, user.passwordHash)) || !user.mfaSecret) {
-        return reply.code(401).send({ error: 'Invalid credentials.' });
-      }
+    const user = await db.select().from(users).where(eq(users.email, email)).get();
+    if (!user || !(await bcrypt.compare(password, user.passwordHash)) || !user.mfaSecret) {
+      return reply.code(401).send({ error: 'Invalid credentials.' });
+    }
 
-      if (!verifySync({ token: code, secret: user.mfaSecret })) {
-        return reply.code(401).send({ error: 'Invalid MFA code.' });
-      }
+    if (!verifySync({ token: code, secret: user.mfaSecret })) {
+      return reply.code(401).send({ error: 'Invalid MFA code.' });
+    }
 
-      createSession(reply, user.id, user.role as 'admin' | 'operator');
-      await db
-        .update(users)
-        .set({ lastLoginAt: new Date().toISOString() })
-        .where(eq(users.id, user.id));
-      return { message: 'Logged in.' };
-    },
-  );
+    createSession(reply, user.id, user.role as 'admin' | 'operator');
+    await db
+      .update(users)
+      .set({ lastLoginAt: new Date().toISOString() })
+      .where(eq(users.id, user.id));
+    return { message: 'Logged in.' };
+  });
 
   // Change password (first-login or voluntary)
-  fastify.post<{ Body: { currentPassword: string; newPassword: string } }>(
+  fastify.post(
     '/change-password',
     { config: { rateLimit: false } },
     async (request, reply) => {
@@ -167,14 +183,9 @@ export const authRoutes: FastifyPluginAsync = async (fastify) => {
         return reply.code(401).send({ error: 'Not authenticated.' });
       }
 
-      const { currentPassword, newPassword } = request.body as {
-        currentPassword: string;
-        newPassword: string;
-      };
-
-      if (!newPassword || newPassword.length < 8) {
-        return reply.code(400).send({ error: 'Password must be at least 8 characters.' });
-      }
+      const body = validate(ChangePasswordSchema, request.body, reply);
+      if (!body) return;
+      const { currentPassword, newPassword } = body;
 
       const user = await db.select().from(users).where(eq(users.id, session.userId)).get();
       if (!user) return reply.code(404).send({ error: 'User not found.' });
@@ -215,7 +226,7 @@ export const authRoutes: FastifyPluginAsync = async (fastify) => {
   });
 
   // MFA setup — verify code
-  fastify.post<{ Body: { code: string } }>(
+  fastify.post(
     '/verify-mfa',
     { config: { rateLimit: false } },
     async (request, reply) => {
@@ -229,7 +240,9 @@ export const authRoutes: FastifyPluginAsync = async (fastify) => {
         return reply.code(400).send({ error: 'MFA not configured. Run setup first.' });
       }
 
-      const { code } = request.body as { code: string };
+      const parsed = validate(VerifyMfaSchema, request.body, reply);
+      if (!parsed) return;
+      const { code } = parsed;
       if (!verifySync({ token: code, secret: user.mfaSecret })) {
         return reply.code(401).send({ error: 'Invalid code. Try again.' });
       }

@@ -12,6 +12,9 @@ import { db } from '../db/index.js';
 import { campaigns, contacts, recordings, transcripts, callLogs } from '../db/schema.js';
 import { eq } from 'drizzle-orm';
 import { config } from '../config.js';
+import { handleOperatorDisconnect, findOperatorByWebrtcLeg } from '../dialer/disconnect.js';
+import { transcribeCallRecording } from '../transcription/post-call.js';
+import { persistRecording } from '../recordings/storage.js';
 
 // AMD timeout — if detection doesn't fire within 35s of call.answered, treat as human
 const AMD_TIMEOUT_MS = 35_000;
@@ -349,6 +352,16 @@ export const telnyxWebhookRoutes: FastifyPluginAsync = async (fastify) => {
               // Call may have already ended
             }
             await dialerEngine.handleCallEnd(call_control_id, 'voicemail');
+          } else if (playbackContext === 'failover') {
+            // Operator-disconnect failover finished — hang up the contact leg
+            // and log as connected (they did talk to a human, briefly).
+            try {
+              const provider = await getProvider();
+              await provider.hangup(call_control_id);
+            } catch {
+              // Already gone
+            }
+            await dialerEngine.handleCallEnd(call_control_id, 'connected');
           } else if (playbackContext === 'opener') {
             // Opener finished — if not yet bridged, update state
             const call = getInFlightCall(call_control_id);
@@ -406,7 +419,20 @@ export const telnyxWebhookRoutes: FastifyPluginAsync = async (fastify) => {
         case 'call.hangup': {
           clearAmdTimeout(call_control_id);
           const call = getInFlightCall(call_control_id);
-          if (!call) break;
+
+          if (!call) {
+            // Not a contact leg — could be an operator's WebRTC leg dropping
+            // (browser crash, network glitch, sleep, intentional close).
+            const orphanedOperator = findOperatorByWebrtcLeg(call_control_id);
+            if (orphanedOperator) {
+              fastify.log.warn(
+                { operatorId: orphanedOperator.userId },
+                'Operator WebRTC leg disconnected — running failover cleanup',
+              );
+              await handleOperatorDisconnect(orphanedOperator);
+            }
+            break;
+          }
 
           let disposition = 'no_answer';
           if (call.callState === 'voicemail_dropping') disposition = 'voicemail';
@@ -418,12 +444,43 @@ export const telnyxWebhookRoutes: FastifyPluginAsync = async (fastify) => {
         }
 
         case 'call.recording.saved': {
-          const recordingUrl = (payload.recording_urls as any)?.mp3 || (payload.public_recording_urls as any)?.mp3;
-          if (recordingUrl) {
-            await db
-              .update(callLogs)
-              .set({ recordingUrl })
-              .where(eq(callLogs.telnyxCallControlId, call_control_id));
+          const remoteRecordingUrl =
+            (payload.recording_urls as any)?.mp3 ||
+            (payload.public_recording_urls as any)?.mp3;
+          if (!remoteRecordingUrl) break;
+
+          // Look up the call log + campaign once; we need both for the
+          // transcription decision.
+          const callLog = await db
+            .select()
+            .from(callLogs)
+            .where(eq(callLogs.telnyxCallControlId, call_control_id))
+            .get();
+          if (!callLog) break;
+
+          // Optionally download the recording into local storage. Falls back
+          // to the remote URL on any failure, so the call log always has
+          // something pointing at the audio.
+          const recordingUrl = await persistRecording(remoteRecordingUrl, callLog.id);
+
+          await db
+            .update(callLogs)
+            .set({ recordingUrl })
+            .where(eq(callLogs.id, callLog.id));
+
+          // Post-call transcription: if the campaign requested it, fire a
+          // background job to download → STT → store. Fire-and-forget so the
+          // webhook response is fast and the dialer keeps running.
+          const campaign = await db
+            .select()
+            .from(campaigns)
+            .where(eq(campaigns.id, callLog.campaignId))
+            .get();
+
+          if (campaign?.transcriptionMode === 'post_call') {
+            transcribeCallRecording(callLog.id, recordingUrl).catch((err) =>
+              console.error('[transcription] post-call failed:', err?.message ?? err),
+            );
           }
           break;
         }

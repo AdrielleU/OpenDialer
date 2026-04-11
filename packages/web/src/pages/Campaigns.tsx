@@ -14,6 +14,7 @@ export default function Campaigns() {
     callerId: '',
     openerRecordingId: '',
     voicemailRecordingId: '',
+    failoverRecordingId: '',
     dropIfNoOperator: true,
     ivrSequence: '',
     ivrGreetingType: 'none' as string,
@@ -32,6 +33,7 @@ export default function Campaigns() {
     callerId: '',
     openerRecordingId: '',
     voicemailRecordingId: '',
+    failoverRecordingId: '',
     dropIfNoOperator: true,
     ivrSequence: '',
     ivrGreetingType: 'none' as string,
@@ -45,6 +47,7 @@ export default function Campaigns() {
       callerId: form.callerId,
       openerRecordingId: form.openerRecordingId ? Number(form.openerRecordingId) : undefined,
       voicemailRecordingId: form.voicemailRecordingId ? Number(form.voicemailRecordingId) : undefined,
+      failoverRecordingId: form.failoverRecordingId ? Number(form.failoverRecordingId) : undefined,
       dropIfNoOperator: form.dropIfNoOperator,
       ivrSequence: form.ivrSequence || null,
       ivrGreetingType: form.ivrGreetingType || 'none',
@@ -70,6 +73,7 @@ export default function Campaigns() {
       callerId: c.callerId,
       openerRecordingId: c.openerRecordingId?.toString() || '',
       voicemailRecordingId: c.voicemailRecordingId?.toString() || '',
+      failoverRecordingId: c.failoverRecordingId?.toString() || '',
       dropIfNoOperator: (c as any).dropIfNoOperator ?? true,
       ivrSequence: (c as any).ivrSequence || '',
       ivrGreetingType: (c as any).ivrGreetingType || 'none',
@@ -199,6 +203,26 @@ export default function Campaigns() {
                   <option key={r.id} value={r.id}>{r.name}</option>
                 ))}
               </select>
+            </div>
+            <div>
+              <label className="block text-sm text-gray-400 mb-1">
+                Failover Recording
+                <span className="ml-2 text-xs text-gray-600">(optional)</span>
+              </label>
+              <select
+                value={form.failoverRecordingId}
+                onChange={(e) => setForm({ ...form, failoverRecordingId: e.target.value })}
+                className="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm"
+              >
+                <option value="">None</option>
+                {recordings.filter((r) => r.type === 'failover').map((r) => (
+                  <option key={r.id} value={r.id}>{r.name}</option>
+                ))}
+              </select>
+              <p className="text-xs text-gray-600 mt-1">
+                Plays to the contact if the operator disconnects mid-call
+                (e.g. "Sorry, we got cut off — we'll call you right back").
+              </p>
             </div>
 
             {/* Call behavior */}

@@ -121,7 +121,7 @@ export function setOperatorAvailability(userId: number, availability: OperatorAv
   }
 }
 
-export function setOperatorWebrtc(userId: number, callControlId: string): void {
+export function setOperatorWebrtc(userId: number, callControlId: string | null): void {
   const op = session.operators.get(userId);
   if (op) op.webrtcCallControlId = callControlId;
 }

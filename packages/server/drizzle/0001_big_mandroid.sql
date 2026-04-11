@@ -1,0 +1,1 @@
+ALTER TABLE `campaigns` ADD `failover_recording_id` integer REFERENCES recordings(id);

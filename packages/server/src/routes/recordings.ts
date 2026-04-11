@@ -11,13 +11,16 @@ const uploadsDir = resolve('uploads');
 
 export const recordingRoutes: FastifyPluginAsync = async (fastify) => {
   // List recordings
-  fastify.get<{ Querystring: { type?: 'opener' | 'voicemail' } }>('/', async (request) => {
-    const { type } = request.query;
-    if (type) {
-      return db.select().from(recordings).where(eq(recordings.type, type));
-    }
-    return db.select().from(recordings);
-  });
+  fastify.get<{ Querystring: { type?: 'opener' | 'voicemail' | 'failover' } }>(
+    '/',
+    async (request) => {
+      const { type } = request.query;
+      if (type) {
+        return db.select().from(recordings).where(eq(recordings.type, type));
+      }
+      return db.select().from(recordings);
+    },
+  );
 
   // Upload recording
   fastify.post('/', async (request, reply) => {
@@ -27,8 +30,10 @@ export const recordingRoutes: FastifyPluginAsync = async (fastify) => {
     const name = (data.fields.name as any)?.value || data.filename;
     const type = (data.fields.type as any)?.value;
 
-    if (!type || !['opener', 'voicemail'].includes(type)) {
-      return reply.code(400).send({ error: 'Type must be "opener" or "voicemail"' });
+    if (!type || !['opener', 'voicemail', 'failover'].includes(type)) {
+      return reply
+        .code(400)
+        .send({ error: 'Type must be "opener", "voicemail", or "failover"' });
     }
 
     const ext = data.filename.split('.').pop() || 'wav';
@@ -41,7 +46,7 @@ export const recordingRoutes: FastifyPluginAsync = async (fastify) => {
       .insert(recordings)
       .values({
         name,
-        type: type as 'opener' | 'voicemail',
+        type: type as 'opener' | 'voicemail' | 'failover',
         filePath: `/uploads/${fileName}`,
       })
       .returning();

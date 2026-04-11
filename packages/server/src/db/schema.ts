@@ -33,10 +33,19 @@ export const campaigns = sqliteTable('campaigns', {
   callerId: text('caller_id').notNull(),
   openerRecordingId: integer('opener_recording_id').references(() => recordings.id),
   voicemailRecordingId: integer('voicemail_recording_id').references(() => recordings.id),
+  failoverRecordingId: integer('failover_recording_id').references(() => recordings.id),
   enableTranscription: integer('enable_transcription', { mode: 'boolean' }).notNull().default(false),
   transcriptionEngine: text('transcription_engine', {
     enum: ['telnyx', 'google', 'deepgram', 'azure'],
   }).default('telnyx'),
+  // 'off'      — no transcription
+  // 'realtime' — stream during the call (Telnyx built-in or BYO STT)
+  // 'post_call'— transcribe the recording after hangup (cheap batch)
+  transcriptionMode: text('transcription_mode', {
+    enum: ['off', 'realtime', 'post_call'],
+  })
+    .notNull()
+    .default('off'),
   sttProvider: text('stt_provider'),
   sttApiKey: text('stt_api_key'),
   dropIfNoOperator: integer('drop_if_no_operator', { mode: 'boolean' }).notNull().default(true),
@@ -106,7 +115,7 @@ export const contactsRelations = relations(contacts, ({ one, many }) => ({
 export const recordings = sqliteTable('recordings', {
   id: integer('id').primaryKey({ autoIncrement: true }),
   name: text('name').notNull(),
-  type: text('type', { enum: ['opener', 'voicemail'] }).notNull(),
+  type: text('type', { enum: ['opener', 'voicemail', 'failover'] }).notNull(),
   filePath: text('file_path').notNull(),
   durationSeconds: integer('duration_seconds'),
   userId: integer('user_id').references(() => users.id),

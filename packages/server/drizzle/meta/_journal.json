@@ -8,6 +8,20 @@
       "when": 1775329919572,
       "tag": "0000_zippy_lady_bullseye",
       "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "6",
+      "when": 1775919358184,
+      "tag": "0001_big_mandroid",
+      "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "6",
+      "when": 1775927318124,
+      "tag": "0002_acoustic_zuras",
+      "breakpoints": true
     }
   ]
 }
