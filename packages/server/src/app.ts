@@ -30,8 +30,19 @@ if (!existsSync(uploadsDir)) {
 export async function buildApp() {
   const app = Fastify({ logger: false });
 
-  // Plugins
-  await app.register(cors, { origin: true, credentials: true });
+  // CORS — defense-in-depth on top of SameSite=Strict session cookies.
+  //
+  // The cookie's SameSite=Strict attribute is the actual CSRF protection
+  // (browser never sends the session cookie on cross-site requests). CORS
+  // here is for users who DO have a fixed front-end origin and want extra
+  // hardening — set ALLOWED_ORIGINS=https://app.example.com,https://x.com
+  // to restrict. Cloudflare Tunnel users with rotating subdomains can leave
+  // it unset; the SameSite cookie still protects them.
+  const allowedOrigins = process.env.ALLOWED_ORIGINS?.split(',').map((o) => o.trim()).filter(Boolean);
+  await app.register(cors, {
+    origin: allowedOrigins && allowedOrigins.length > 0 ? allowedOrigins : true,
+    credentials: true,
+  });
   await app.register(cookie);
   await app.register(multipart, { limits: { fileSize: 50 * 1024 * 1024 } }); // 50MB
   await app.register(fastifyStatic, {

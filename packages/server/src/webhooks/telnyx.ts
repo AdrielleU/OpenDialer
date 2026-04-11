@@ -63,9 +63,33 @@ export const telnyxWebhookRoutes: FastifyPluginAsync = async (fastify) => {
     }
   });
 
+  // Loud startup warning for unverified webhook setups. We default to "warn
+  // and accept" instead of "fail closed" so first-time / dev installs work
+  // out of the box, but production users should set TELNYX_PUBLIC_KEY +
+  // WEBHOOK_REQUIRE_SIGNATURE=true.
+  if (!config.TELNYX_PUBLIC_KEY) {
+    if (config.WEBHOOK_REQUIRE_SIGNATURE) {
+      fastify.log.error(
+        'WEBHOOK_REQUIRE_SIGNATURE=true but TELNYX_PUBLIC_KEY is not set — all incoming webhooks will be rejected with 403',
+      );
+    } else {
+      fastify.log.warn(
+        '⚠ TELNYX_PUBLIC_KEY is not set — webhook signature verification is DISABLED. Anyone who knows your webhook URL can POST fake call events. Set TELNYX_PUBLIC_KEY (and WEBHOOK_REQUIRE_SIGNATURE=true) before going to production.',
+      );
+    }
+  }
+
   fastify.post('/telnyx', async (request, reply) => {
-    // Verify webhook signature if public key is configured
     const publicKey = config.TELNYX_PUBLIC_KEY;
+
+    // Fail closed when enforcement is requested but no key is configured
+    if (config.WEBHOOK_REQUIRE_SIGNATURE && !publicKey) {
+      return reply
+        .code(403)
+        .send({ error: 'Webhook signature verification required but TELNYX_PUBLIC_KEY is not configured' });
+    }
+
+    // Verify webhook signature if public key is configured
     if (publicKey) {
       const signature = request.headers['telnyx-signature-ed25519'] as string | undefined;
       const timestamp = request.headers['telnyx-timestamp'] as string | undefined;

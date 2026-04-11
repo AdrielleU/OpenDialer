@@ -11,6 +11,14 @@ const envSchema = z.object({
   TELNYX_CONNECTION_ID: z.string().optional(),
   TELNYX_PHONE_NUMBER: z.string().optional(),
   TELNYX_PUBLIC_KEY: z.string().optional(),
+  // If 'true', the /webhooks/telnyx endpoint refuses to process events
+  // unless TELNYX_PUBLIC_KEY is set AND the request signature is valid.
+  // Defaults to false for dev / first-time setup, but should be ENABLED
+  // in production to stop attackers from POSTing fake call events.
+  WEBHOOK_REQUIRE_SIGNATURE: z
+    .string()
+    .default('false')
+    .transform((v) => v === 'true' || v === '1'),
   DEFAULT_ADMIN_PASSWORD: z.string().optional(),
   DEFAULT_ADMIN_EMAIL: z.string().default('admin@localhost'),
   REQUIRE_MFA: z.string().default('false').transform((v) => v === 'true' || v === '1'),

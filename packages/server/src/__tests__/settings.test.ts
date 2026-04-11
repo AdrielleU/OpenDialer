@@ -36,14 +36,16 @@ describe('Settings API', () => {
     expect(res.json().success).toBe(true);
   });
 
-  it('GET /api/settings returns saved settings', async () => {
+  it('GET /api/settings returns saved settings (with secrets redacted)', async () => {
     const res = await app.inject({
       method: 'GET',
       url: '/api/settings',
       headers: { cookie: authCookie() },
     });
     const body = res.json();
-    expect(body.TELNYX_API_KEY).toBe('test-key-123');
+    // *_KEY fields are redacted to ******** in GET responses
+    expect(body.TELNYX_API_KEY).toBe('********');
+    // Non-secret fields pass through unchanged
     expect(body.SOME_SETTING).toBe('value');
   });
 
@@ -59,7 +61,45 @@ describe('Settings API', () => {
       url: '/api/settings',
       headers: { cookie: authCookie() },
     });
-    expect(res.json().TELNYX_API_KEY).toBe('updated-key');
+    // Still redacted in the response, but the underlying value changed
+    expect(res.json().TELNYX_API_KEY).toBe('********');
+  });
+
+  it('PUT /api/settings with the redacted placeholder is a no-op for that key', async () => {
+    // Set a real key
+    await app.inject({
+      method: 'PUT',
+      url: '/api/settings',
+      headers: { cookie: authCookie() },
+      payload: { TELNYX_API_KEY: 'real-secret-value' },
+    });
+    // Send back the redacted value (simulating UI round-trip without edits)
+    await app.inject({
+      method: 'PUT',
+      url: '/api/settings',
+      headers: { cookie: authCookie() },
+      payload: { TELNYX_API_KEY: '********', SOME_SETTING: 'updated-value' },
+    });
+
+    // Direct DB read confirms the underlying secret was NOT overwritten
+    const { db } = await import('../db/index.js');
+    const { settings: settingsTable } = await import('../db/schema.js');
+    const { eq } = await import('drizzle-orm');
+    const row = await db
+      .select()
+      .from(settingsTable)
+      .where(eq(settingsTable.key, 'TELNYX_API_KEY'))
+      .get();
+    expect(row?.value).toBe('real-secret-value');
+
+    // GET still returns redacted version, but SOME_SETTING (not a secret) was updated
+    const res = await app.inject({
+      method: 'GET',
+      url: '/api/settings',
+      headers: { cookie: authCookie() },
+    });
+    expect(res.json().TELNYX_API_KEY).toBe('********');
+    expect(res.json().SOME_SETTING).toBe('updated-value');
   });
 
   it('GET /api/settings/health returns configured status', async () => {

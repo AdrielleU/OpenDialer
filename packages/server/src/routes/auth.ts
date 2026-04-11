@@ -48,7 +48,16 @@ function createSession(reply: any, userId: number, role: 'admin' | 'operator'): 
   sessions.set(sessionId, { userId, role, createdAt: Date.now() });
   reply.setCookie(SESSION_COOKIE, sessionId, {
     httpOnly: true,
-    sameSite: 'lax',
+    // SameSite=Strict closes the CSRF hole regardless of CORS config: the
+    // browser refuses to send this cookie on any cross-site request, so an
+    // attacker page on evil.com cannot trigger authenticated state changes
+    // even if our CORS policy is permissive (which it has to be for users
+    // running behind a Cloudflare Tunnel with a rotating subdomain).
+    //
+    // Trade-off: clicking a deep link from email/Slack/etc. won't include
+    // the cookie on the first request and the user gets bounced to login.
+    // Acceptable for an internal admin/operator dashboard.
+    sameSite: 'strict',
     secure: process.env.NODE_ENV === 'production',
     path: '/',
     maxAge: SESSION_MAX_AGE,

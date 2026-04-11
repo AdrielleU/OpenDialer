@@ -1,34 +1,21 @@
 # OpenDialer Gap Analysis & Audit Findings
 
-> **Status:** Open punch list. Each item links to the file/line that needs work and includes a severity + effort estimate so it can be prioritized for future PRs. Generated 2026-04 against `main` at commit `8d7926c`.
+> **Status:** Open punch list. Each item links to the file/line that needs work and includes a severity + effort estimate so it can be prioritized for future PRs. Last refreshed 2026-04.
 
-The repo currently has **159 server tests + 21 web tests = 180 passing**. This document tracks what's *still* missing or wrong, organized by category.
+The repo currently has **171 server tests + 21 web tests = 192 passing**. This document tracks what's *still* missing or wrong, organized by category.
+
+## ✅ Resolved in subsequent commits
+
+These items from the original audit have been addressed and should NOT be reopened:
+
+- **#1 CSRF via permissive CORS** — fixed by switching the session cookie to `SameSite=Strict` (closes the hole regardless of CORS or tunnel URL). Optional `ALLOWED_ORIGINS` env var added for users with a fixed front-end domain who want defense-in-depth.
+- **#2 Webhook signature verification** — added a loud startup warning when `TELNYX_PUBLIC_KEY` is unset, plus an optional `WEBHOOK_REQUIRE_SIGNATURE=true` env var to fail closed in production setups.
+- **#11 Settings secrets redaction** — `GET /api/settings` now returns `********` for any field whose key matches `*_KEY|*_SECRET|*_TOKEN|*_PASSWORD`. PUT silently drops the redacted placeholder so UI round-trips don't overwrite real secrets.
+- **#18 Webhook handler test suite** — new `__tests__/webhooks-telnyx.test.ts` covers event routing, `call.hangup` orphaned-operator detection, `call.recording.saved` transcription trigger (post_call mode + off mode), `call.transcription` interim/final filtering, and `call.recording.saved` URL fallbacks. 11 new tests using a `vi.mock`'d provider so no real Telnyx API calls.
 
 ---
 
 ## CRITICAL — must fix before any production HIPAA deployment
-
-### 1. CSRF via permissive CORS + cookie auth
-**Severity:** HIGH · **Effort:** tiny · **File:** `packages/server/src/app.ts:34`
-
-CORS is configured as `{ origin: true, credentials: true }`, which echoes back any origin and allows credentialed requests. Combined with `sameSite: 'lax'` cookies, an attacker site can trigger authenticated state-changing requests against `/api/dialer/start`, `/api/contacts/bulk`, etc., using a victim's browser session.
-
-**Fix:** Restrict to an explicit origin allowlist, e.g.
-```ts
-{ origin: process.env.ALLOWED_ORIGINS?.split(',') || false, credentials: true }
-```
-And upgrade the session cookie to `sameSite: 'strict'` in `packages/server/src/routes/auth.ts:29`.
-
----
-
-### 2. Webhook signature verification is opt-in
-**Severity:** HIGH · **Effort:** tiny · **File:** `packages/server/src/webhooks/telnyx.ts:66-100`
-
-If `TELNYX_PUBLIC_KEY` is unset, signature verification is silently skipped and webhooks are accepted unverified. An attacker can POST fake `call.answered` / `call.hangup` / `call.machine.detection.ended` events to `/webhooks/telnyx` and trigger arbitrary state changes (hang up calls, drop voicemails, misdirect routing).
-
-**Fix:** Fail closed when the public key is missing — refuse webhook processing unless verification is enabled. Add a startup warning if the key is unset.
-
----
 
 ### 3. No HIPAA audit log
 **Severity:** CRITICAL (HIPAA only) · **Effort:** large · **File:** *no audit log implementation anywhere*
@@ -107,15 +94,6 @@ Recording upload only checks the `type` form field (`opener`/`voicemail`/`failov
 
 ---
 
-### 11. Settings GET returns secrets in plaintext
-**Severity:** MEDIUM · **Effort:** small · **File:** `packages/server/src/routes/settings.ts:30-37`
-
-`GET /api/settings` returns the entire dictionary including `TELNYX_API_KEY`, `OPENAI_API_KEY`, `STT_API_KEY`. Admin-only, but if an admin's browser is compromised or they access from a shared screen, secrets are visible in cleartext in the response.
-
-**Fix:** Redact password-shaped fields (anything matching `*_KEY`/`*_SECRET`/`*_TOKEN`) to `********` in the GET response. Allow updates but never echo the actual value.
-
----
-
 ### 12. In-flight call orphaned on call-log insert failure
 **Severity:** MEDIUM · **Effort:** medium · **File:** `packages/server/src/dialer/engine.ts:151-187`
 
@@ -175,21 +153,6 @@ If a contact hangs up while ringing or during AMD, the disposition gets mapped t
 ---
 
 ## TEST COVERAGE GAPS
-
-### 18. Webhook handler has zero direct tests
-**Severity:** HIGH · **Effort:** large · **File:** `packages/server/src/webhooks/telnyx.ts` (no test file)
-
-The webhook handler is "the brain" of the dialer but is only exercised indirectly via the engine integration tests. No tests for:
-- Signature verification (valid + invalid + missing)
-- `call.answered` / `call.machine.detection.ended` (machine vs. human vs. not_sure vs. timeout)
-- `call.hangup` in various call states
-- `call.recording.saved` triggering post-call transcription
-- `call.playback.ended` for opener / voicemail / failover branches
-- Duplicate event handling
-
-**Fix:** New `__tests__/webhooks-telnyx.test.ts`. Mock `getProvider()`, post raw event payloads via `app.inject()`, assert state changes.
-
----
 
 ### 19. Engine core functions tested only via integration
 **Severity:** HIGH · **Effort:** large · **File:** `packages/server/src/dialer/engine.ts`

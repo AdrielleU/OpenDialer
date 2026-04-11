@@ -3,6 +3,26 @@ import { db } from '../db/index.js';
 import { settings } from '../db/schema.js';
 import { eq } from 'drizzle-orm';
 
+// Patterns that mark a setting key as secret. Values for these keys are
+// redacted to ******** in GET responses so an admin viewing the Settings
+// page never sees the raw API key, even though they're allowed to update it.
+// PUT still accepts and stores the real value.
+const SECRET_KEY_PATTERN = /(_KEY|_SECRET|_TOKEN|_PASSWORD)$/i;
+
+const REDACTED_VALUE = '********';
+
+function redactSecrets(settings: Record<string, string>): Record<string, string> {
+  const out: Record<string, string> = {};
+  for (const [k, v] of Object.entries(settings)) {
+    if (v && SECRET_KEY_PATTERN.test(k)) {
+      out[k] = REDACTED_VALUE;
+    } else {
+      out[k] = v;
+    }
+  }
+  return out;
+}
+
 // Whitelist of settings that may be written via the API. Any extra keys are
 // rejected with 400 — prevents arbitrary key injection.
 const ALLOWED_SETTING_KEYS = new Set<string>([
@@ -31,14 +51,14 @@ export const settingRoutes: FastifyPluginAsync = async (fastify) => {
     }
   });
 
-  // Get all settings as key-value object
+  // Get all settings as key-value object — secrets are redacted to ********
   fastify.get('/', async () => {
     const rows = await db.select().from(settings);
     const obj: Record<string, string> = {};
     for (const row of rows) {
       obj[row.key] = row.value;
     }
-    return obj;
+    return redactSecrets(obj);
   });
 
   // Upsert settings
@@ -54,7 +74,11 @@ export const settingRoutes: FastifyPluginAsync = async (fastify) => {
         keys: invalid.map(([k]) => k),
       });
     }
-    for (const [key, value] of entries) {
+    // Drop any field that's still the redacted placeholder — this happens when
+    // the UI fetched settings (which redacts), then PUT the same dictionary
+    // back unmodified. Without this, we'd overwrite real secrets with "********".
+    const writes = entries.filter(([k, v]) => !(SECRET_KEY_PATTERN.test(k) && v === REDACTED_VALUE));
+    for (const [key, value] of writes) {
       await db
         .insert(settings)
         .values({ key, value })
