@@ -458,41 +458,72 @@ If only one operator is in the session, it behaves like a traditional power dial
 
 ## 🏗️ Architecture
 
+OpenDialer is a **control-plane app**, not a media relay. The dialer server tells Telnyx what to do via REST; Telnyx handles all the actual voice traffic. The browser establishes a WebRTC peer connection **directly to Telnyx**, bypassing the dialer server entirely.
+
+This separation matters for self-hosting: it means the server's network only needs to handle small HTTP traffic (REST + SSE + webhooks), and you can put it behind any reverse proxy / tunnel / firewall without affecting call audio quality.
+
 ```
-┌─────────────────────────────────┐
-│      React + Tailwind UI         │
-│  (Softphone + Campaign Mgmt)    │
-│  Uses: @telnyx/webrtc SDK        │
-└──────────────┬──────────────────┘
-               │ SSE (real-time call status)
-               │ REST API (CRUD operations)
-               │
-┌──────────────┴──────────────────┐
-│       Fastify Backend            │
-│                                  │
-│  ┌────────────────────────────┐  │
-│  │  Telnyx Webhook Handler    │  │  ← Receives call events from Telnyx
-│  │  (The Brain)               │  │
-│  └────────────────────────────┘  │
-│  ┌────────────────────────────┐  │
-│  │  Parallel Dialing Engine   │  │  ← Team queue, multi-line, auto-route
-│  └────────────────────────────┘  │
-│  ┌────────────────────────────┐  │
-│  │  Provider Abstraction      │  │  ← Telnyx now, Twilio later
-│  └────────────────────────────┘  │
-│  ┌────────────────────────────┐  │
-│  │  Analytics + CSV Export    │  │  ← Stats, reports, data export
-│  └────────────────────────────┘  │
-│                                  │
-│  SQLite / libSQL (Drizzle ORM)   │  ← Local file or external DB
-└──────────────┬──────────────────┘
-               │
-┌──────────────┴──────────────────┐
-│  Telnyx Call Control API         │
-│  - Dial, AMD, Playback, Bridge  │
-│  - WebRTC (browser audio)       │
-└──────────────────────────────────┘
+                  Operator's Browser
+                  ┌──────────────────┐
+                  │  React + Tailwind │
+                  │  @telnyx/webrtc   │
+                  └────┬─────┬───────┘
+                       │     │
+       HTTP / SSE      │     │   WebRTC signaling (WSS)
+       (frontend       │     │   + SRTP audio (UDP)
+        bundle, REST,  │     │   ─ direct to Telnyx ─
+        /events)       │     │
+                       ▼     ▼
+        ┌─────────────────┐  │
+        │ Cloudflare Tun. │  │
+        │   (optional)    │  │
+        └────────┬────────┘  │
+                 │           │
+                 ▼           │
+        ┌─────────────────┐  │
+        │ Fastify Backend │  │
+        │   ┌──────────┐  │  │
+        │   │ Webhook  │  │  │  ← Telnyx posts call events
+        │   │ Handler  │  │  │     here (HTTP)
+        │   └──────────┘  │  │
+        │   ┌──────────┐  │  │
+        │   │ Dialing  │  │  │  ← Sends Call Control
+        │   │ Engine   ├──┼──┼──▶ REST commands to Telnyx
+        │   └──────────┘  │  │     (start/bridge/hangup)
+        │   ┌──────────┐  │  │
+        │   │ SQLite + │  │  │  ← Contacts, recordings,
+        │   │ uploads/ │  │  │     transcripts, call logs
+        │   └──────────┘  │  │
+        └────────┬────────┘  │
+                 │           │
+                 ▼           ▼
+            Telnyx REST   Telnyx Media Servers
+            (Call Control)  (sip.telnyx.com,
+                             RTP 16384–32768)
+                                  │
+                                  ▼
+                          PSTN / contact's phone
 ```
+
+**Two completely separate network paths from each operator's browser:**
+
+1. **Browser ⇄ Cloudflare Tunnel ⇄ Dialer server** — only HTTP. The frontend bundle, REST API calls (`/api/dialer/*`), the Server-Sent Events stream at `/events`, and Telnyx webhooks inbound to `/webhooks/telnyx`. This is what your tunnel proxies. Small bandwidth, all free.
+2. **Browser ⇄ Telnyx (direct)** — WebRTC signaling WebSocket + SRTP audio. The Telnyx WebRTC SDK opens its own connection straight to Telnyx's media servers. **Never touches your server or your tunnel.** Your operators are talking to Telnyx the same way they'd talk to any other website.
+
+The dialer server's only role in voice traffic is sending REST commands ("dial this number", "bridge call A to operator B", "hang up call C") to Telnyx's Call Control API. The actual audio flows directly between operators and Telnyx.
+
+### Network ports operators need outbound
+
+If your operators are behind a corporate firewall, IT needs to allow these outbound destinations from operator workstations:
+
+| Direction | Port / Protocol | Destination | Purpose |
+|---|---|---|---|
+| Operator → Your dialer | **TCP 443** | Your tunnel hostname (e.g. `*.trycloudflare.com`) | Frontend bundle + REST API + SSE + login |
+| Operator → Telnyx | **TCP 443** (WSS) | `sip.telnyx.com` / `rtc.telnyx.com` | WebRTC signaling |
+| Operator → Telnyx | **UDP 16384–32768** | Telnyx media IP ranges (live list at `sip.telnyx.com`) | SRTP audio packets |
+| Operator → STUN/TURN | **UDP/TCP 3478**, **TCP 5349** (TLS) | STUN/TURN servers | NAT traversal |
+
+If UDP egress is blocked entirely (strict enterprise networks), the Telnyx SDK falls back to **TCP/TLS on 443** via ICE-TCP — works but adds latency. If your operators are on home WiFi, normal office networks, or mobile hotspots, none of this needs configuration; it just works.
 
 ### Tech Stack
 
@@ -706,6 +737,73 @@ docker compose --profile tunnel-named up --build -d
 | **Fly.io** | $0-5/mo | Managed. Free tier works for single user |
 | **Railway** | $5/mo | Fastest deploy. Connect GitHub → done |
 | **Your own server** | Any machine with Docker | `docker compose up` and you're live |
+
+### How operators reach the app (deployment models)
+
+A self-hosted dialer with multiple operators raises an obvious question: how do remote operators access the server? You have three reasonable options. **A traditional VPN is rarely the right answer** — modern alternatives are simpler and free at this scale.
+
+#### Option 1: Public internet via Cloudflare Tunnel (default, recommended)
+
+```
+[Operator browser] ──HTTPS──▶ [Cloudflare Tunnel] ──▶ [Your server]
+                                                          │
+                                              [Telnyx webhooks come back same way]
+```
+
+- App is reachable at a public HTTPS URL via Cloudflare Tunnel (anonymous = random `*.trycloudflare.com`, named = your own domain)
+- Operators access from anywhere — home, office, coffee shop — by going to the URL and logging in
+- Security is the built-in auth: bcrypt passwords, optional TOTP MFA (`REQUIRE_MFA=true`), rate-limited login (5 attempts / 30s), session cookies with `SameSite=Strict`, admin role checks
+- **Cost: $0.** Cloudflare Tunnel is free with no bandwidth caps for normal HTTP traffic. The `2021 "A Boring Announcement: Free Tunnels for Everyone"` blog post removed the old per-byte pricing.
+- Best for: 1–10 operators, remote-friendly, simplest setup. **This is what `docker compose --profile tunnel up` already gives you.**
+
+#### Option 2: Tailscale (modern zero-trust mesh, no VPN client overhead)
+
+```
+[Operator browser] ──▶ [Tailscale client] ──encrypted mesh──▶ [Your server]
+                                                                  │
+                                                                  ▼
+                                                      [Cloudflare Tunnel for /webhooks/* only]
+                                                                  ▲
+                                                                  │
+                                                            [Telnyx webhooks]
+```
+
+- The dialer server is **only listening on its Tailscale IP** (e.g. `100.64.x.x`), not the public internet
+- Each operator installs the Tailscale client on Mac / Windows / Linux / iOS / Android (free at <100 users) and joins your Tailnet
+- Operators reach the app at `http://server-name.tailnet.ts.net:3000` — looks like a normal local URL but encrypted end-to-end
+- Telnyx webhooks still need to reach the server — keep a Cloudflare Tunnel **just for the `/webhooks/telnyx` path**
+- **Cost: $0** (Tailscale free tier covers up to 100 users; Cloudflare Tunnel still free for the webhook side)
+- Best for: teams that want to hide the app from the public internet entirely, or want to tell an auditor "the dialer is not reachable from outside our network"
+
+#### Option 3: Cloudflare Access (SSO at the edge, no client install)
+
+```
+[Operator browser] ──▶ [Cloudflare Access SSO] ──▶ [Cloudflare Tunnel] ──▶ [Your server]
+                              ▲
+                              │
+                  [Google / Microsoft / GitHub / SAML]
+```
+
+- Cloudflare Access sits in front of OpenDialer and gates access at the edge
+- Operators authenticate with Google / Microsoft 365 / GitHub / SAML SSO before Cloudflare even forwards the request to your origin
+- The OpenDialer auth still runs underneath as a second factor
+- No VPN client to install — operators just see a Cloudflare login page in their browser
+- Configure Cloudflare to bypass Access on `/webhooks/telnyx` so Telnyx can still POST events through
+- **Cost: $0 up to 50 users.** After 50 it's $7/user/month — and the billing cliff means you pay for ALL users, not just the overage (a 51st user costs $357/mo, not $7). Stay under 50 if possible.
+- Best for: teams that already use Google Workspace / Microsoft 365 and want SSO integration
+
+#### Why NOT a traditional VPN
+
+OpenVPN, WireGuard with manual config, IPsec, etc. — all of these technically work but they're dated for this use case:
+
+- Every operator needs a VPN client + a config file (IT overhead per user)
+- VPN concentrators are a single point of failure and a juicy target
+- Tailscale and Cloudflare Access do the same thing with less operational overhead
+- The only legitimate reason to use a traditional VPN is regulatory compliance or integration with existing infrastructure ("the office already has a Fortinet box")
+
+### Important: WebRTC bypasses your access control
+
+**Whichever model you pick above, the WebRTC voice path goes browser-to-Telnyx-direct.** Audio never flows through Cloudflare, your VPN, or your dialer server. This is a feature: it means hiding the dialer behind any access layer doesn't slow down or affect call quality. See the [Architecture section](#%EF%B8%8F-architecture) for the full network diagram.
 
 ### Database Options
 
