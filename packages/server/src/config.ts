@@ -29,3 +29,14 @@ const envSchema = z.object({
 
 export const config = envSchema.parse(process.env);
 export type Config = typeof config;
+
+// Guard rail: the Twilio provider is a stub. Allowing PROVIDER=twilio at
+// startup means the first call attempt fails with an opaque "not yet
+// implemented" runtime error. Refuse to start so the operator gets a clear
+// message instead. Skipped during tests so the test runner doesn't exit.
+if (config.PROVIDER === 'twilio' && process.env.NODE_ENV !== 'test' && !process.env.VITEST) {
+  console.error(
+    'PROVIDER=twilio is not yet implemented. Set PROVIDER=telnyx (or remove the variable).',
+  );
+  process.exit(1);
+}

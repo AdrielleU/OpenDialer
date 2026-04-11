@@ -166,13 +166,28 @@ export const callLogs = sqliteTable('call_logs', {
     .notNull()
     .references(() => contacts.id),
   operatorId: integer('operator_id').references(() => users.id),
+  // The first operator who took the call before any transfer. NULL for
+  // calls that never transferred. When set, operatorId is the *current*
+  // operator and originalOperatorId is the one who was originally bridged.
+  originalOperatorId: integer('original_operator_id').references(() => users.id),
+  // ISO timestamp when transferCall() bridged this call to a new operator.
+  transferredAt: text('transferred_at'),
   telnyxCallControlId: text('telnyx_call_control_id'),
   startedAt: text('started_at'),
   endedAt: text('ended_at'),
   durationSeconds: integer('duration_seconds'),
   talkTimeSeconds: integer('talk_time_seconds'),
   disposition: text('disposition', {
-    enum: ['voicemail', 'connected', 'no_answer', 'busy', 'failed'],
+    enum: [
+      'voicemail',
+      'connected',
+      'no_answer',
+      'busy',
+      'failed',
+      // Richer hangup-before-answer dispositions added 2026-04
+      'ringing_abandoned', // contact hung up before AMD started
+      'amd_abandoned', // contact hung up while AMD was running
+    ],
   }),
   recordingUrl: text('recording_url'),
   humanTookOver: integer('human_took_over', { mode: 'boolean' }).notNull().default(false),

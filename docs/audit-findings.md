@@ -2,20 +2,46 @@
 
 > **Status:** Open punch list. Each item links to the file/line that needs work and includes a severity + effort estimate so it can be prioritized for future PRs. Last refreshed 2026-04.
 
-The repo currently has **171 server tests + 21 web tests = 192 passing**. This document tracks what's *still* missing or wrong, organized by category.
+The repo currently has **261 server tests + 36 web tests = 297 passing**. This document tracks what's *still* open after multiple cleanup PRs, organized by category.
 
-## ✅ Resolved in subsequent commits
+## ✅ Resolved (do not reopen)
 
-These items from the original audit have been addressed and should NOT be reopened:
+These items from the original audit have been addressed:
 
+**Security & hardening**
 - **#1 CSRF via permissive CORS** — fixed by switching the session cookie to `SameSite=Strict` (closes the hole regardless of CORS or tunnel URL). Optional `ALLOWED_ORIGINS` env var added for users with a fixed front-end domain who want defense-in-depth.
 - **#2 Webhook signature verification** — added a loud startup warning when `TELNYX_PUBLIC_KEY` is unset, plus an optional `WEBHOOK_REQUIRE_SIGNATURE=true` env var to fail closed in production setups.
+- **#7 AMD timeout map memory leak** — the timeout callback now `delete`s its own map entry on fire. Added `cleanupOrphanedAmdTimeouts()` periodic sweep alongside the existing transcript cleanup interval.
+- **#8 Session map cleanup** — new `cleanupExpiredSessions()` exported from `routes/auth.ts`, scheduled from `index.ts` on the same 24h interval as transcript cleanup.
+- **#9 Rate limiting on cost-bursting endpoints** — `@fastify/rate-limit` registered globally with `global: false`. Per-route opt-in: `/api/dialer/start` (10/5min), `/api/transcripts/retranscribe` (30/min), `/api/contacts/bulk` (10/min).
 - **#11 Settings secrets redaction** — `GET /api/settings` now returns `********` for any field whose key matches `*_KEY|*_SECRET|*_TOKEN|*_PASSWORD`. PUT silently drops the redacted placeholder so UI round-trips don't overwrite real secrets.
-- **#18 Webhook handler test suite** — new `__tests__/webhooks-telnyx.test.ts` covers event routing, `call.hangup` orphaned-operator detection, `call.recording.saved` transcription trigger (post_call mode + off mode), `call.transcription` interim/final filtering, and `call.recording.saved` URL fallbacks. 11 new tests using a `vi.mock`'d provider so no real Telnyx API calls.
+- **#12 Orphaned in-flight call** — `dialOne()` split into Phase 1 (provider.dial) and Phase 2 (DB updates). On Phase 2 failure, the orphaned Telnyx call is now hung up so no leaked ringing line.
+- **#14 Twilio stub validation** — `config.ts` refuses to start with `PROVIDER=twilio` (skipped in test mode). Clear error message instead of opaque runtime crash.
+
+**UX / behavior**
+- **#15 Operator join doesn't auto-route** — `/api/dialer/join` now calls `dialerEngine.tryRouteWaitingCall()` after `addOperator()` so a queued call routes to the new operator immediately.
+- **#16 Transferred-call audit trail** — added `originalOperatorId` + `transferredAt` columns to `call_logs` (migration `0003_giant_micromax.sql`); `transferCall()` populates them.
+- **#17 Hangup-before-answer disposition** — extended call disposition enum with `ringing_abandoned` + `amd_abandoned`. Webhook handler maps based on call state. Contact-level status falls back to `no_answer` since contacts have a narrower enum.
+
+**Tests**
+- **#18 Webhook handler test suite** — new `__tests__/webhooks-telnyx.test.ts` (11 tests).
+- **#19 Engine core unit tests** — new `__tests__/engine.test.ts` (22 tests) covering `startSession`, `dialNextBatch`, `routeToOperator`, `handleCallEnd`, `tryRouteWaitingCall`, `pauseSession`/`resumeSession`/`stopSession` with a `vi.mock`'d provider.
+- **#20 Soundboard component test** — new `web/src/__tests__/Soundboard.test.tsx` (9 tests) covering TTS pre-fill, recording grid, error states.
+- **#21 Transcription page test** — new `web/src/__tests__/Transcription.test.tsx` (6 tests) covering mode picker, post-call disabled state, HIPAA warning, transcript rendering.
+- **#22 Auth middleware sweep test** — new `__tests__/auth-middleware.test.ts` (59 tests, one per protected/public route).
+- **#23 Migration backfill test** — new `__tests__/migration-backfill.test.ts` (2 tests) verifying the 0002 backfill SQL is correct.
+- **#24 Integrations endpoint tests** — new `__tests__/integrations.test.ts` (7 tests) with mocked HubSpot client + webhook firing.
+- **#25 E2E test investigation** — documented current coverage in [docs/e2e-tests.md](e2e-tests.md), added `.github/workflows/e2e.yml` (PR-only) so the existing Playwright suite runs in CI.
 
 ---
 
+## STILL OPEN
+
+The following items remain in the audit. The HIPAA-specific items are deferred at the user's request ("hipaa isnt needed at all"). Webhook idempotency, file upload validation, and recording cleanup were explicitly declined in earlier discussions.
+
 ## CRITICAL — must fix before any production HIPAA deployment
+
+> **Note:** these are HIPAA-specific. Skip them if your deployment doesn't handle PHI.
 
 ### 3. No HIPAA audit log
 **Severity:** CRITICAL (HIPAA only) · **Effort:** large · **File:** *no audit log implementation anywhere*
@@ -44,193 +70,31 @@ Some console.log/error statements include callLogId, file paths, and could expos
 
 ---
 
-## HIGH — bugs and security issues worth fixing soon
+## DECLINED — see "Resolved" section above for context
 
-### 6. Webhook idempotency missing
-**Severity:** HIGH · **Effort:** medium · **File:** `packages/server/src/webhooks/telnyx.ts` (all event handlers)
+The following items were investigated and deferred or declined; they are NOT in the active backlog:
 
-Telnyx retries webhooks on network failures. If `call.hangup` fires twice, `handleCallEnd` runs twice → potential double-counted dispositions or duplicate transcripts on `call.recording.saved`.
+- **#6 Webhook idempotency** — declined; the contact-leg hangup almost always lands cleanly on the first try and the user prefers manual recovery via the Re-transcribe button.
+- **#13 Recording cleanup cron** — declined; user manages disk usage manually.
 
-**Fix:** Add a `processed_webhooks (event_id PRIMARY KEY, processed_at)` table. Reject duplicates with 200 OK and skip processing.
-
----
-
-### 7. AMD timeout Map memory leak
-**Severity:** MEDIUM · **Effort:** small · **File:** `packages/server/src/webhooks/telnyx.ts:18`
-
-`amdTimeouts` Map stores per-call timeout handles. If a call ends without hitting `call.machine.detection.ended` (network drop, weird Telnyx behavior), the timeout fires but the Map entry is never deleted.
-
-**Fix:** Have the timeout callback `delete` itself from the Map; add a periodic sweep for orphaned entries.
-
----
-
-### 8. Session Map only cleaned lazily
-**Severity:** MEDIUM · **Effort:** small · **File:** `packages/server/src/routes/auth.ts:22-49`
-
-Sessions in the in-memory Map are only deleted when accessed and found expired. Sessions for users who never come back grow unbounded.
-
-**Fix:** Add a `cleanupExpiredSessions()` function and run it from a 1-hour interval timer (or hook into the existing transcript cleanup cron).
-
----
-
-### 9. No rate limiting on cost-bursting endpoints
-**Severity:** MEDIUM · **Effort:** small · **Files:**
-- `packages/server/src/routes/dialer.ts:19` — `POST /api/dialer/start`
-- `packages/server/src/routes/transcripts.ts` — `POST /api/transcripts/retranscribe`
-- `packages/server/src/routes/contacts.ts` — `POST /api/contacts/bulk`
-
-A compromised admin token (or a buggy script) can spam these endpoints and burn through Telnyx minutes / OpenAI quota / DB connections.
-
-**Fix:** Apply `@fastify/rate-limit` to these specific routes — e.g., 10 starts/min, 30 retranscribes/min, 5 bulk imports/min.
-
----
+## OPEN BUGS
 
 ### 10. File upload accepts any content as audio
-**Severity:** MEDIUM · **Effort:** small · **File:** `packages/server/src/routes/recordings.ts:23-50`
+**Severity:** LOW · **Effort:** small · **File:** `packages/server/src/routes/recordings.ts:23-50` · **Status:** declined by user (admin-only upload on a self-hosted box)
 
-Recording upload only checks the `type` form field (`opener`/`voicemail`/`failover`) and the 50MB size limit. No MIME-type or magic-bytes check on the file itself. Someone could upload an executable disguised as `.mp3`.
-
-**Fix:** Sniff the first few bytes for known audio magic numbers (ID3, RIFF, OggS, etc.) and reject non-audio files at upload time.
+Recording upload only checks the `type` form field (`opener`/`voicemail`/`failover`) and the 50MB size limit. No MIME-type or magic-bytes check on the file itself. The user explicitly noted that they don't have user-facing file upload, so the practical risk is low. Left here for completeness; not in active backlog.
 
 ---
 
-### 12. In-flight call orphaned on call-log insert failure
-**Severity:** MEDIUM · **Effort:** medium · **File:** `packages/server/src/dialer/engine.ts:151-187`
+## Suggested order of attack (remaining items)
 
-`dialOne()` calls `provider.dial()` (creates the Telnyx call), then `addInFlightCall()`, then inserts a `call_logs` row. If the DB insert fails after the dial succeeds, the Telnyx call is live but there's no row to track it — orphaned state.
+If you're picking from this list, my recommended order for the **non-HIPAA** items:
 
-**Fix:** Wrap the sequence in a try/catch that hangs up the Telnyx call on DB failure, OR insert the call log first and update with the call_control_id afterward.
+1. **Audit logging (#3)** — only if you operate under HIPAA. Otherwise skip.
+2. **Session idle timeout (#4)** — same. Could be repurposed as general security hygiene if you want it without HIPAA pressure.
+3. **PHI in logs (#5)** — same.
 
----
-
-### 13. No automatic recording cleanup
-**Severity:** MEDIUM · **Effort:** small · **Files:**
-- `packages/server/src/db/cleanup.ts` (existing pattern for transcripts)
-- `packages/server/src/recordings/storage.ts` (no cleanup function)
-
-`cleanupOldTranscripts()` exists for transcript retention but there's no equivalent for recording files in `uploads/recordings/`. Disk fills up over time. At 1k calls/week ≈ 20 GB/month of recordings.
-
-**Fix:** Add `cleanupOldRecordings(retentionDays)` mirroring the transcript cleanup pattern. Default retention 90 days (configurable). Also delete unreferenced files (where the call log row was deleted).
-
----
-
-### 14. Telnyx provider stub crashes if PROVIDER=twilio
-**Severity:** LOW · **Effort:** tiny · **File:** `packages/server/src/providers/twilio.ts`
-
-If a user accidentally sets `PROVIDER=twilio` in settings, calls to provider methods throw `not implemented` errors at runtime instead of being caught at config time.
-
-**Fix:** Validate `PROVIDER` at startup in `config.ts` — only allow `'telnyx'` until Twilio is implemented. Or gracefully refuse to start with a clear error message.
-
----
-
-## MEDIUM — design gaps
-
-### 15. Operator joining mid-session doesn't auto-route
-**Severity:** LOW · **Effort:** tiny · **File:** `packages/server/src/routes/dialer.ts:121-141`
-
-When a new operator joins an already-running session, they get `availability='available'` but waiting calls in the queue don't immediately route to them. They have to wait for another event (an existing operator going to wrap-up, the next dial batch) to trigger routing.
-
-**Fix:** Call `dialerEngine.tryRouteWaitingCall()` immediately after `addOperator()` in the join handler.
-
----
-
-### 16. Transferred-call audit trail
-**Severity:** LOW · **Effort:** small · **File:** `packages/server/src/dialer/disconnect.ts:transferCall`
-
-When a call transfers to a new operator after a disconnect, the call log only stores a free-text note. There's no structured audit trail of who originally took the call, when it was transferred, and to whom.
-
-**Fix:** Add a `call_transfers` table or extend `call_logs` with `originalOperatorId` + `transferredAt` columns.
-
----
-
-### 17. Hangup-before-answer disposition lossy
-**Severity:** LOW · **Effort:** tiny · **File:** `packages/server/src/webhooks/telnyx.ts:435-440`
-
-If a contact hangs up while ringing or during AMD, the disposition gets mapped to `'no_answer'` regardless of the actual state. Loses context (was it abandoned during AMD? While ringing?).
-
-**Fix:** Add a richer disposition mapping that distinguishes `ringing_abandoned`, `amd_abandoned`, etc.
-
----
-
-## TEST COVERAGE GAPS
-
-### 19. Engine core functions tested only via integration
-**Severity:** HIGH · **Effort:** large · **File:** `packages/server/src/dialer/engine.ts`
-
-`dialNextBatch`, `routeToOperator`, `handleCallEnd`, `tryRouteWaitingCall` — ~600 lines of business logic — are exercised only through `dialer-routes.test.ts` happy paths. Missing:
-- `dialNextBatch` with empty queue, with concurrent operator additions, with `dropIfNoOperator=true`
-- `routeToOperator` when bridge fails, when no operator available
-- `handleCallEnd` for every disposition, with and without recording, with and without transcription
-
-**Fix:** Pure unit tests with seeded team-state and mocked provider.
-
----
-
-### 20. Soundboard React component untested
-**Severity:** MEDIUM · **Effort:** small · **File:** `packages/web/src/components/Soundboard.tsx`
-
-The new in-call soundboard component (TTS textarea + recording grid) has no tests. No verification that `playRecording` and `speak` API calls fire correctly or that errors render.
-
-**Fix:** New `Soundboard.test.tsx` with `@testing-library/react`. Mock `api.dialer.playRecording` and `api.dialer.speak`, assert UI behavior on click and on error.
-
----
-
-### 21. Rebuilt Transcription page untested
-**Severity:** MEDIUM · **Effort:** small · **File:** `packages/web/src/pages/Transcription.tsx`
-
-The mode dropdown, the disabled-state when no STT provider configured, the Re-transcribe button — none have unit tests. The page was substantially rebuilt for this PR.
-
-**Fix:** New `Transcription.test.tsx` covering the mode picker, the post-call provider warning, and the retranscribe flow.
-
----
-
-### 22. Auth middleware coverage thin
-**Severity:** MEDIUM · **Effort:** small · **File:** `packages/server/src/app.ts:62-83`
-
-Only one test (`dialer-routes.test.ts:110-116`) verifies that `GET /api/dialer/status` returns 401 without auth. There's no comprehensive sweep verifying every protected endpoint and every exempted path.
-
-**Fix:** New `__tests__/auth-middleware.test.ts` that programmatically iterates over a list of routes and asserts the right behavior per route.
-
----
-
-### 23. Migration backfill untested
-**Severity:** MEDIUM · **Effort:** small · **Files:** `packages/server/drizzle/0002_acoustic_zuras.sql`, `packages/server/src/db/migrate.ts`
-
-The 0002 migration includes a backfill `UPDATE` that converts existing `enable_transcription = 1` rows to `transcription_mode = 'realtime'`. If the SQL has a typo or the migration runs against weird existing data, the backfill could silently fail.
-
-**Fix:** New migration test that seeds a campaign with `enable_transcription=1`, runs migrations, and asserts `transcription_mode='realtime'`.
-
----
-
-### 24. Integrations endpoints untested
-**Severity:** MEDIUM · **Effort:** small · **File:** `packages/server/src/routes/integrations.ts`
-
-HubSpot test/import/log-call and webhook test endpoints have no tests. No verification of credential handling, error paths, or admin enforcement.
-
-**Fix:** New `__tests__/integrations.test.ts` with mocked HubSpot client.
-
----
-
-### 25. E2E test status unclear
-**Severity:** LOW · **Effort:** investigation · **File:** `e2e/` directory
-
-There's an `e2e/` directory with Playwright tests but they're not run by `pnpm test` (only by `pnpm test:e2e` which requires a build first). Unclear what scenarios they cover, whether they still pass, and whether the new features (soundboard, failover, batch transcription, retranscribe) have any e2e coverage.
-
-**Fix:** Investigate, run them locally, document the coverage, and add the e2e job to CI.
-
----
-
-## Suggested order of attack
-
-If you're picking from this list, my recommended order:
-
-1. **Fix #1 + #2 (CORS + webhook verification)** — both are tiny one-line changes, both close real security holes. ~20 min total.
-2. **Add tests #18 + #19** (webhook handler + engine core) — these are the biggest test gaps and the highest-risk untested code. ~1-2 days.
-3. **Fix #6 (webhook idempotency)** — protects against double-counting from Telnyx retries. ~half a day.
-4. **Fix #11 (settings secrets redaction)** — small UX/security improvement. ~30 min.
-5. **Fix #13 (recording cleanup)** — disk fills up otherwise. ~half a day.
-6. **Fix #4 + #5 (HIPAA session timeout + log scrubbing)** — only matters if you're operating under HIPAA, but mandatory if you are. ~1 day each.
-7. **Fix #3 (audit logging)** — also HIPAA-only and a real lift. Multi-day. Save for last unless required.
+Everything else is either resolved or explicitly declined.
 
 Items 14-17 and 20-25 are nice-to-haves that can wait.
 

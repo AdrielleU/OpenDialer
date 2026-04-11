@@ -71,16 +71,26 @@ export const contactRoutes: FastifyPluginAsync = async (fastify) => {
     return reply.code(201).send(result[0]);
   });
 
-  // Bulk import contacts (from CSV parsed on frontend)
-  fastify.post('/bulk', async (request, reply) => {
-    const body = validate(BulkContactsSchema, request.body, reply);
-    if (!body) return;
-    const { campaignId, contacts: contactList } = body;
-    if (contactList.length === 0) return reply.code(400).send({ error: 'No contacts provided' });
-    const values = contactList.map((c) => ({ ...c, campaignId }));
-    const result = await db.insert(contacts).values(values).returning();
-    return reply.code(201).send({ imported: result.length });
-  });
+  // Bulk import contacts (from CSV parsed on frontend).
+  // Rate-limited to 10/min — protects against accidental DoS via huge arrays
+  // and against abuse from a compromised admin token.
+  fastify.post(
+    '/bulk',
+    {
+      config: {
+        rateLimit: { max: 10, timeWindow: '1 minute' },
+      },
+    },
+    async (request, reply) => {
+      const body = validate(BulkContactsSchema, request.body, reply);
+      if (!body) return;
+      const { campaignId, contacts: contactList } = body;
+      if (contactList.length === 0) return reply.code(400).send({ error: 'No contacts provided' });
+      const values = contactList.map((c) => ({ ...c, campaignId }));
+      const result = await db.insert(contacts).values(values).returning();
+      return reply.code(201).send({ imported: result.length });
+    },
+  );
 
   // Update contact
   fastify.put<{ Params: { id: string } }>('/:id', async (request, reply) => {

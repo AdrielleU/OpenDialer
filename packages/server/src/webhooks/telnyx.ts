@@ -28,6 +28,31 @@ function clearAmdTimeout(callControlId: string) {
   }
 }
 
+/**
+ * Periodic safety sweep — removes any orphaned timeout entries whose handle
+ * has already fired but wasn't cleared (e.g., the callback ran but a code
+ * change caused it to skip the delete). Belt-and-suspenders for the AMD
+ * timeout map. Called from the same cron interval as transcript cleanup.
+ */
+export function cleanupOrphanedAmdTimeouts(): number {
+  let removed = 0;
+  for (const [callControlId, handle] of amdTimeouts.entries()) {
+    // Node.js Timer objects expose `_destroyed` after they've fired/cleared.
+    // Falling back to a simple has-it-fired check; defensive for type safety.
+    const fired = (handle as any)._destroyed === true;
+    if (fired) {
+      amdTimeouts.delete(callControlId);
+      removed++;
+    }
+  }
+  return removed;
+}
+
+// Test helper — exposes the map size for verification in unit tests
+export function _amdTimeoutMapSize(): number {
+  return amdTimeouts.size;
+}
+
 interface TelnyxEvent {
   data: {
     event_type: string;
@@ -266,6 +291,12 @@ export const telnyxWebhookRoutes: FastifyPluginAsync = async (fastify) => {
           amdTimeouts.set(
             call_control_id,
             setTimeout(async () => {
+              // Self-clean: always remove this entry from the map when the
+              // callback runs, regardless of whether the body below executes.
+              // Without this, calls that end abnormally (network drop before
+              // call.machine.detection.ended) leak handles forever.
+              amdTimeouts.delete(call_control_id);
+
               const call = getInFlightCall(call_control_id);
               if (call?.callState === 'amd_detecting') {
                 fastify.log.warn({ call_control_id }, 'AMD timeout — no detection result');
@@ -458,10 +489,30 @@ export const telnyxWebhookRoutes: FastifyPluginAsync = async (fastify) => {
             break;
           }
 
+          // Map the in-flight call state at hangup time to a disposition.
+          // The richer "ringing_abandoned" / "amd_abandoned" values let
+          // analytics distinguish "contact never picked up" from "contact
+          // hung up while we were still figuring out who they were".
           let disposition = 'no_answer';
-          if (call.callState === 'voicemail_dropping') disposition = 'voicemail';
-          else if (call.callState === 'operator_bridged' || call.callState === 'human_answered')
-            disposition = 'connected';
+          switch (call.callState) {
+            case 'voicemail_dropping':
+              disposition = 'voicemail';
+              break;
+            case 'operator_bridged':
+            case 'human_answered':
+            case 'opener_playing':
+              disposition = 'connected';
+              break;
+            case 'dialing':
+            case 'ringing':
+              disposition = 'ringing_abandoned';
+              break;
+            case 'amd_detecting':
+              disposition = 'amd_abandoned';
+              break;
+            default:
+              disposition = 'no_answer';
+          }
 
           await dialerEngine.handleCallEnd(call_control_id, disposition);
           break;

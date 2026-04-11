@@ -43,6 +43,31 @@ interface SessionData {
 // In-memory session store
 export const sessions = new Map<string, SessionData>();
 
+/**
+ * Sweep the session map for expired entries. The lazy cleanup in
+ * `getSessionData` only removes a session when someone tries to use it,
+ * so a user who logs in and never returns leaves their session in the map
+ * for the full 24h TTL plus forever after. This sweep makes the bound real:
+ * after one cycle, the map size is ≤ active sessions.
+ *
+ * Returns the number of entries removed (useful for tests / logging).
+ */
+export function cleanupExpiredSessions(): number {
+  const now = Date.now();
+  const cutoff = SESSION_MAX_AGE * 1000;
+  let removed = 0;
+  for (const [sessionId, data] of sessions.entries()) {
+    if (now - data.createdAt > cutoff) {
+      sessions.delete(sessionId);
+      removed++;
+    }
+  }
+  if (removed > 0) {
+    console.log(`[auth] Swept ${removed} expired session(s) from memory`);
+  }
+  return removed;
+}
+
 function createSession(reply: any, userId: number, role: 'admin' | 'operator'): string {
   const sessionId = randomBytes(32).toString('hex');
   sessions.set(sessionId, { userId, role, createdAt: Date.now() });

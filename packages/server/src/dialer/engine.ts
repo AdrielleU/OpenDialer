@@ -132,27 +132,30 @@ export const dialerEngine = {
       },
     });
 
+    const provider = await getProvider();
+    const campaign = await db
+      .select()
+      .from(campaigns)
+      .where(eq(campaigns.id, session.campaignId))
+      .get();
+
+    const connectionId =
+      (await getSetting('TELNYX_CONNECTION_ID')) || config.TELNYX_CONNECTION_ID || '';
+    const webhookUrl = `${(await getSetting('WEBHOOK_BASE_URL')) || config.WEBHOOK_BASE_URL}/webhooks/telnyx`;
+
+    const clientState = JSON.stringify({
+      campaignId: session.campaignId,
+      contactId,
+    });
+
+    // Disable AMD for contacts with IVR sequences (navigating phone trees)
+    const hasIvr = !!(contact.ivrSequence || campaign?.ivrSequence);
+
+    // Phase 1: dial the contact via the provider. If THIS fails, no Telnyx
+    // call exists yet, so there's nothing to clean up — just log and return.
+    let result;
     try {
-      const provider = await getProvider();
-      const campaign = await db
-        .select()
-        .from(campaigns)
-        .where(eq(campaigns.id, session.campaignId))
-        .get();
-
-      const connectionId =
-        (await getSetting('TELNYX_CONNECTION_ID')) || config.TELNYX_CONNECTION_ID || '';
-      const webhookUrl = `${(await getSetting('WEBHOOK_BASE_URL')) || config.WEBHOOK_BASE_URL}/webhooks/telnyx`;
-
-      const clientState = JSON.stringify({
-        campaignId: session.campaignId,
-        contactId,
-      });
-
-      // Disable AMD for contacts with IVR sequences (navigating phone trees)
-      const hasIvr = !!(contact.ivrSequence || campaign?.ivrSequence);
-
-      const result = await provider.dial({
+      result = await provider.dial({
         to: contact.phone,
         from: campaign?.callerId || '',
         connectionId,
@@ -160,18 +163,25 @@ export const dialerEngine = {
         enableAmd: !hasIvr,
         clientState,
       });
+    } catch (err: any) {
+      broadcast({
+        type: 'error',
+        data: { message: `Failed to dial: ${err.message}`, contactId },
+      });
+      return;
+    }
 
-      // Track in-flight
+    // Phase 2: track in-flight + insert call log + update contact. If any of
+    // THIS fails, the Telnyx call is already live — we have to hang it up to
+    // avoid an orphaned ringing line that nobody can see.
+    try {
       addInFlightCall(result.callControlId, contactId);
-
-      // Create call log entry
       await db.insert(callLogs).values({
         campaignId: session.campaignId,
         contactId,
         telnyxCallControlId: result.callControlId,
         startedAt: new Date().toISOString(),
       });
-
       await db
         .update(contacts)
         .set({
@@ -180,9 +190,21 @@ export const dialerEngine = {
         })
         .where(eq(contacts.id, contactId));
     } catch (err: any) {
+      console.error(
+        `[engine] dialOne post-dial setup failed, hanging up orphaned call ${result.callControlId}:`,
+        err?.message ?? err,
+      );
+      removeInFlightCall(result.callControlId);
+      // Best-effort hangup — if this also fails the Telnyx call will time out
+      // on its own eventually, but we tried.
+      try {
+        await provider.hangup(result.callControlId);
+      } catch {
+        /* already gone */
+      }
       broadcast({
         type: 'error',
-        data: { message: `Failed to dial: ${err.message}`, contactId },
+        data: { message: `Dial setup failed: ${err.message}`, contactId },
       });
     }
   },
@@ -539,16 +561,23 @@ export const dialerEngine = {
       })
       .where(eq(callLogs.telnyxCallControlId, callControlId));
 
-    // Update contact status
+    // Update contact status. The contact-level status enum is narrower than
+    // the call-log disposition (no ringing_abandoned / amd_abandoned), so
+    // map abandoned dispositions back to 'no_answer' for the contact view.
+    // The richer disposition is still preserved on the call log itself.
     if (call.contactId) {
+      const contactStatus =
+        disposition === 'ringing_abandoned' || disposition === 'amd_abandoned'
+          ? 'no_answer'
+          : disposition;
       await db
         .update(contacts)
-        .set({ status: disposition as any })
+        .set({ status: contactStatus as any })
         .where(eq(contacts.id, call.contactId));
 
       broadcast({
         type: 'contact_updated',
-        data: { contactId: call.contactId, status: disposition },
+        data: { contactId: call.contactId, status: contactStatus },
       });
     }
 

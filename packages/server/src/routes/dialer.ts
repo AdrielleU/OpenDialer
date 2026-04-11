@@ -40,16 +40,26 @@ function requireAdmin(request: any, reply: any): boolean {
 }
 
 export const dialerRoutes: FastifyPluginAsync = async (fastify) => {
-  // Start dialing session for a campaign (admin only)
-  fastify.post<{ Body: { campaignId: number } }>('/start', async (request, reply) => {
-    if (!requireAdmin(request, reply)) return;
-    try {
-      await dialerEngine.startSession(request.body.campaignId);
-      return { status: 'started' };
-    } catch (err: any) {
-      return reply.code(400).send({ error: err.message });
-    }
-  });
+  // Start dialing session for a campaign (admin only).
+  // Rate-limited to prevent runaway dial loops from a buggy script or a
+  // compromised admin token burning through Telnyx minutes.
+  fastify.post<{ Body: { campaignId: number } }>(
+    '/start',
+    {
+      config: {
+        rateLimit: { max: 10, timeWindow: '5 minutes' },
+      },
+    },
+    async (request, reply) => {
+      if (!requireAdmin(request, reply)) return;
+      try {
+        await dialerEngine.startSession(request.body.campaignId);
+        return { status: 'started' };
+      } catch (err: any) {
+        return reply.code(400).send({ error: err.message });
+      }
+    },
+  );
 
   // Pause auto-advance (admin only)
   fastify.post('/pause', async (request, reply) => {
@@ -131,6 +141,14 @@ export const dialerRoutes: FastifyPluginAsync = async (fastify) => {
       type: 'operator_status_changed',
       data: { operatorId: userId, name: user.name, availability: 'available' },
     });
+
+    // If a call is already waiting in the queue (humans answered while no
+    // operator was free), route it to this newly-joined operator immediately
+    // instead of waiting for the next dial batch tick. Fire-and-forget so
+    // a routing failure doesn't break the join response.
+    dialerEngine.tryRouteWaitingCall().catch((err) =>
+      console.error('[dialer] tryRouteWaitingCall on join failed:', err?.message ?? err),
+    );
 
     return {
       status: 'joined',

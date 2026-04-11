@@ -108,7 +108,17 @@ export const transcriptRoutes: FastifyPluginAsync = async (fastify) => {
   //   - calls that were never transcribed (campaign was 'off' at the time)
   //   - calls where transcription failed mid-job (server crash)
   //   - re-transcribing with a different STT model after upgrading
-  fastify.post('/retranscribe', async (request, reply) => {
+  //
+  // Rate-limited to prevent burning through STT API quota (cloud Whisper
+  // bills per minute and a script could spam this endpoint indefinitely).
+  fastify.post(
+    '/retranscribe',
+    {
+      config: {
+        rateLimit: { max: 30, timeWindow: '1 minute' },
+      },
+    },
+    async (request, reply) => {
     const body = validate(RetranscribeSchema, request.body, reply);
     if (!body) return;
     const { callLogId, force } = body;
@@ -158,6 +168,7 @@ export const transcriptRoutes: FastifyPluginAsync = async (fastify) => {
       });
     }
 
-    return { status: 'transcribed', lines: fresh.length };
-  });
+      return { status: 'transcribed', lines: fresh.length };
+    },
+  );
 };

@@ -207,6 +207,16 @@ async function transferCall(
 ): Promise<boolean> {
   if (!target.webrtcCallControlId) return false;
 
+  // Look up the call log BEFORE the bridge so we can capture the original
+  // operator id (the one who was on the call before this disconnect). We use
+  // it to populate originalOperatorId on the audit columns added in 0003.
+  const existingLog = await db
+    .select()
+    .from(callLogs)
+    .where(eq(callLogs.telnyxCallControlId, contactCallControlId))
+    .get();
+  const originalOperatorId = existingLog?.originalOperatorId ?? existingLog?.operatorId ?? null;
+
   try {
     const provider = await getProvider();
     await provider.bridge(contactCallControlId, target.webrtcCallControlId);
@@ -258,11 +268,15 @@ async function transferCall(
     },
   });
 
-  // Note the transfer on the call log
+  // Update call log: current operator is now `target`, but record the
+  // original (first-bridged) operator and the transfer timestamp so the
+  // audit trail survives multiple transfers.
   await db
     .update(callLogs)
     .set({
       operatorId: target.userId,
+      originalOperatorId,
+      transferredAt: new Date().toISOString(),
       notes: 'Call transferred to new operator after previous operator disconnected',
     })
     .where(eq(callLogs.telnyxCallControlId, contactCallControlId));

@@ -54,6 +54,8 @@ export default function Analytics() {
     no_answer: 'bg-red-500',
     busy: 'bg-orange-500',
     failed: 'bg-gray-500',
+    ringing_abandoned: 'bg-red-700',
+    amd_abandoned: 'bg-orange-700',
   };
 
   const contactStatusColors: Record<string, string> = {

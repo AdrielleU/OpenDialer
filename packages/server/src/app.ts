@@ -3,6 +3,7 @@ import cors from '@fastify/cors';
 import cookie from '@fastify/cookie';
 import multipart from '@fastify/multipart';
 import fastifyStatic from '@fastify/static';
+import rateLimit from '@fastify/rate-limit';
 import { campaignRoutes } from './routes/campaigns.js';
 import { contactRoutes } from './routes/contacts.js';
 import { recordingRoutes } from './routes/recordings.js';
@@ -44,6 +45,10 @@ export async function buildApp() {
     credentials: true,
   });
   await app.register(cookie);
+  // Register rate-limit globally with global: false so it's available for
+  // per-route opt-in via { config: { rateLimit: { max, timeWindow } } }.
+  // Auth routes register their own scoped rate-limit (5/30s for login).
+  await app.register(rateLimit, { global: false });
   await app.register(multipart, { limits: { fileSize: 50 * 1024 * 1024 } }); // 50MB
   await app.register(fastifyStatic, {
     root: uploadsDir,
