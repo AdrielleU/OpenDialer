@@ -1,6 +1,6 @@
 import { eq } from 'drizzle-orm';
 import { db } from '../db/index.js';
-import { campaigns, contacts, recordings, callLogs } from '../db/schema.js';
+import { contacts, callLogs } from '../db/schema.js';
 import {
   getTeamSession,
   getInFlightCall,
@@ -13,7 +13,6 @@ import {
 import type { OperatorState } from './team-state.js';
 import { getProvider } from '../providers/index.js';
 import { broadcast, broadcastToUser } from '../ws/index.js';
-import { config } from '../config.js';
 import { dialerEngine } from './engine.js';
 
 /**
@@ -32,20 +31,14 @@ export function findOperatorByWebrtcLeg(callControlId: string): OperatorState | 
 /**
  * Handle operator disconnect mid-call.
  *
- * Order of preference:
- *   1. **Transfer** the live call to another available operator if one is free.
- *      The contact stays on the line, the new operator gets the same routed-call
- *      UI they'd see for a normal pickup. Best UX.
- *   2. **Play failover recording** (if the campaign has one set), then hang up.
- *      Graceful "we'll call you right back" instead of dead air.
- *   3. **Hang up immediately** if no failover recording is configured.
+ * 1. Transfer the live call to another available operator if one is free.
+ * 2. Otherwise hang up cleanly.
  *
  * Either way, the disconnected operator's WebRTC + bridge state is cleared
- * so they don't get routed more calls until they re-register a fresh WebRTC leg.
+ * so they don't get routed more calls until they re-register.
  *
- * Triggered from two places:
- *   1. Telnyx webhook `call.hangup` for the operator's WebRTC leg
- *   2. `/api/dialer/leave` when the operator clicks Leave Session while bridged
+ * Triggered by Telnyx `call.hangup` for the operator's WebRTC leg, or by
+ * `/api/dialer/leave` when the operator clicks Leave while bridged.
  */
 export async function handleOperatorDisconnect(operator: OperatorState): Promise<void> {
   const contactCallControlId = operator.bridgedToCallId;
@@ -102,73 +95,26 @@ export async function handleOperatorDisconnect(operator: OperatorState): Promise
       });
       return;
     }
-    // Transfer failed (bridge error etc.) — fall through to failover playback.
-    console.error('[disconnect] Transfer failed, falling back to failover playback');
+    console.error('[disconnect] Transfer failed, hanging up');
   }
 
-  // --- Step 2 / 3: no operator available (or transfer failed) — failover or hangup ---
+  // No transfer target (or transfer failed) — hang up the contact leg cleanly.
   setOperatorAvailability(userId, 'offline');
   broadcast({
     type: 'operator_status_changed',
     data: { operatorId: userId, availability: 'offline', reason: 'disconnected' },
   });
 
-  const session = getTeamSession();
-  const campaign = await db
-    .select()
-    .from(campaigns)
-    .where(eq(campaigns.id, session.campaignId))
-    .get();
-
-  const provider = await getProvider();
-
-  // Notify the (now-disconnected) operator's other devices, if any
   broadcastToUser(userId, {
     type: 'call_status_changed',
     data: {
       callControlId: contactCallControlId,
       callState: 'ended',
-      message: 'Disconnected from call — failover playing.',
+      message: 'Disconnected from call.',
     },
   });
 
-  if (campaign?.failoverRecordingId) {
-    const recording = await db
-      .select()
-      .from(recordings)
-      .where(eq(recordings.id, campaign.failoverRecordingId))
-      .get();
-
-    if (recording) {
-      // Mark the call so the playback.ended handler knows to hang up after.
-      const clientState = JSON.stringify({
-        campaignId: session.campaignId,
-        contactId: inFlight.contactId,
-        playbackType: 'failover',
-      });
-      const audioUrl = `${config.WEBHOOK_BASE_URL}${recording.filePath}`;
-
-      try {
-        // Stop any in-progress playback first (e.g. opener still going)
-        await provider.stopPlayback(contactCallControlId).catch(() => {});
-        await provider.playAudio(contactCallControlId, audioUrl, clientState);
-
-        // Note the disconnect on the call log
-        await db
-          .update(callLogs)
-          .set({ notes: 'Operator disconnected — failover message played' })
-          .where(eq(callLogs.telnyxCallControlId, contactCallControlId));
-
-        // Don't hang up here — the playback.ended handler will do it once the
-        // failover recording finishes.
-        return;
-      } catch (err: any) {
-        console.error('[disconnect] Failed to play failover, hanging up:', err.message);
-      }
-    }
-  }
-
-  // No failover recording, OR the playback failed — hang up immediately.
+  const provider = await getProvider();
   try {
     await provider.hangup(contactCallControlId);
   } catch {
@@ -176,7 +122,7 @@ export async function handleOperatorDisconnect(operator: OperatorState): Promise
   }
   await db
     .update(callLogs)
-    .set({ notes: 'Operator disconnected — call ended (no failover recording)' })
+    .set({ notes: 'Operator disconnected — call ended' })
     .where(eq(callLogs.telnyxCallControlId, contactCallControlId));
 
   // The Telnyx hangup we just sent will fire its own call.hangup webhook

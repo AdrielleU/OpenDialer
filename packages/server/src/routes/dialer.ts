@@ -24,12 +24,6 @@ const PlayRecordingSchema = z.object({
   recordingId: z.number().int().positive(),
 });
 
-const SpeakSchema = z.object({
-  callControlId: z.string().min(1),
-  text: z.string().min(1).max(1000),
-  voice: z.string().max(50).optional(),
-});
-
 const DropVoicemailSchema = z.object({
   callControlId: z.string().min(1),
   // Optional override — drop a non-default recording for this one call
@@ -294,29 +288,6 @@ export const dialerRoutes: FastifyPluginAsync = async (fastify) => {
       });
       await provider.playAudio(callControlId, audioUrl, clientState);
       return { status: 'playing', recordingId };
-    } catch (err: any) {
-      return reply.code(500).send({ error: err.message });
-    }
-  });
-
-  // Speak text on the live call leg via Telnyx TTS — operator AI message box
-  fastify.post('/speak', async (request, reply) => {
-    const userId = (request as any).userId as number;
-    const body = validate(SpeakSchema, request.body, reply);
-    if (!body) return;
-    const { callControlId, text, voice } = body;
-
-    // Verify caller owns the call (must be the assigned operator)
-    const call = getInFlightCall(callControlId);
-    if (!call) return reply.code(404).send({ error: 'Call not found.' });
-    if (call.assignedOperatorId !== userId) {
-      return reply.code(403).send({ error: 'You are not the assigned operator on this call.' });
-    }
-
-    try {
-      const provider = await getProvider();
-      await provider.speak(callControlId, text, voice);
-      return { status: 'speaking' };
     } catch (err: any) {
       return reply.code(500).send({ error: err.message });
     }

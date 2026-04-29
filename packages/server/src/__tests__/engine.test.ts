@@ -31,7 +31,6 @@ const bridgeMock = vi.fn();
 const playAudioMock = vi.fn();
 const startRecordingMock = vi.fn();
 const startTranscriptionMock = vi.fn();
-const startStreamingMock = vi.fn();
 
 vi.mock('../providers/index.js', async () => {
   const actual = await vi.importActual<typeof import('../providers/index.js')>(
@@ -48,8 +47,6 @@ vi.mock('../providers/index.js', async () => {
       stopRecording: vi.fn(),
       startTranscription: startTranscriptionMock,
       stopTranscription: vi.fn(),
-      startStreaming: startStreamingMock,
-      stopStreaming: vi.fn(),
       sendDTMF: vi.fn(),
       speak: vi.fn(),
       mute: vi.fn(),
@@ -84,7 +81,6 @@ beforeEach(() => {
   playAudioMock.mockClear();
   startRecordingMock.mockClear();
   startTranscriptionMock.mockClear();
-  startStreamingMock.mockClear();
 });
 
 afterEach(async () => {

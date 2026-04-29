@@ -4,9 +4,7 @@ export interface Campaign {
   callerId: string;
   openerRecordingId: number | null;
   voicemailRecordingId: number | null;
-  failoverRecordingId: number | null;
   enableTranscription?: boolean;
-  transcriptionEngine?: string;
   transcriptionMode?: 'off' | 'realtime' | 'post_call';
   dropIfNoOperator?: boolean;
   maxAttempts?: number;
@@ -38,7 +36,7 @@ export interface Contact {
 export interface Recording {
   id: number;
   name: string;
-  type: 'opener' | 'voicemail' | 'failover';
+  type: 'opener' | 'voicemail';
   filePath: string;
   durationSeconds: number | null;
   createdAt: string;

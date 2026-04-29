@@ -30,7 +30,6 @@ const PROTECTED_ROUTES: Array<{ method: 'GET' | 'POST' | 'PUT' | 'DELETE'; url: 
   { method: 'POST', url: '/api/dialer/set-available' },
   { method: 'POST', url: '/api/dialer/set-wrap-up' },
   { method: 'POST', url: '/api/dialer/play-recording' },
-  { method: 'POST', url: '/api/dialer/speak' },
   { method: 'POST', url: '/api/dialer/stop-and-talk' },
   { method: 'GET', url: '/api/dialer/webrtc-credentials' },
   { method: 'POST', url: '/api/dialer/register-webrtc' },
@@ -79,9 +78,6 @@ const PROTECTED_ROUTES: Array<{ method: 'GET' | 'POST' | 'PUT' | 'DELETE'; url: 
   { method: 'DELETE', url: '/api/transcripts/1' },
   { method: 'POST', url: '/api/transcripts/retranscribe' },
   // Integrations
-  { method: 'GET', url: '/api/integrations/hubspot/test' },
-  { method: 'POST', url: '/api/integrations/hubspot/import' },
-  { method: 'POST', url: '/api/integrations/hubspot/log-call' },
   { method: 'POST', url: '/api/integrations/webhook/test' },
 ];
 

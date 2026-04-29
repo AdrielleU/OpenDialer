@@ -1,6 +1,5 @@
 import type { TelephonyProvider } from './types.js';
 import { TelnyxProvider } from './telnyx.js';
-import { TwilioProvider } from './twilio.js';
 import { db } from '../db/index.js';
 import { settings } from '../db/schema.js';
 import { eq } from 'drizzle-orm';
@@ -13,13 +12,6 @@ async function getSetting(key: string): Promise<string | undefined> {
 }
 
 export async function getProvider(): Promise<TelephonyProvider> {
-  const provider = (await getSetting('PROVIDER')) || process.env.PROVIDER || 'telnyx';
-
-  if (provider === 'twilio') {
-    return new TwilioProvider();
-  }
-
-  // Telnyx
   const apiKey = (await getSetting('TELNYX_API_KEY')) || process.env.TELNYX_API_KEY;
   if (!apiKey) {
     throw new Error('Telnyx API key not configured. Set it in Settings.');

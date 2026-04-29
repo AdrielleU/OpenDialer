@@ -124,13 +124,11 @@ export const authRoutes: FastifyPluginAsync = async (fastify) => {
   // Auth status
   fastify.get('/status', { config: { rateLimit: false } }, async (request) => {
     const session = getSessionData(request);
-    const hasWorkos = !!config.WORKOS_API_KEY && !!config.WORKOS_CLIENT_ID;
 
     if (session) {
       const user = await db.select().from(users).where(eq(users.id, session.userId)).get();
       return {
         loggedIn: true,
-        hasWorkos,
         user: user
           ? {
               id: user.id,
@@ -144,7 +142,7 @@ export const authRoutes: FastifyPluginAsync = async (fastify) => {
       };
     }
 
-    return { loggedIn: false, hasWorkos };
+    return { loggedIn: false };
   });
 
   // Login: email + password
@@ -287,72 +285,6 @@ export const authRoutes: FastifyPluginAsync = async (fastify) => {
         .where(eq(users.id, session.userId));
 
       return { message: 'MFA verified and enabled.' };
-    },
-  );
-
-  // WorkOS SSO
-  fastify.get('/workos', { config: { rateLimit: false } }, async (_request, reply) => {
-    if (!config.WORKOS_API_KEY || !config.WORKOS_CLIENT_ID) {
-      return reply.code(400).send({ error: 'WorkOS not configured.' });
-    }
-    const { WorkOS } = await import('@workos-inc/node');
-    const workos = new WorkOS(config.WORKOS_API_KEY);
-    const redirectUri = `${config.WEBHOOK_BASE_URL}/api/auth/workos/callback`;
-    const authorizationUrl = workos.userManagement.getAuthorizationUrl({
-      provider: 'authkit',
-      redirectUri,
-      clientId: config.WORKOS_CLIENT_ID,
-    });
-    return reply.redirect(authorizationUrl);
-  });
-
-  fastify.get<{ Querystring: { code?: string } }>(
-    '/workos/callback',
-    { config: { rateLimit: false } },
-    async (request, reply) => {
-      if (!config.WORKOS_API_KEY || !config.WORKOS_CLIENT_ID) {
-        return reply.code(400).send({ error: 'WorkOS not configured.' });
-      }
-      const { code } = request.query;
-      if (!code) return reply.code(400).send({ error: 'Missing authorization code.' });
-
-      try {
-        const { WorkOS } = await import('@workos-inc/node');
-        const workos = new WorkOS(config.WORKOS_API_KEY);
-        const { user: workosUser } = await workos.userManagement.authenticateWithCode({
-          code,
-          clientId: config.WORKOS_CLIENT_ID,
-        });
-
-        // Find or create user by email
-        let user = await db
-          .select()
-          .from(users)
-          .where(eq(users.email, workosUser.email))
-          .get();
-
-        if (!user) {
-          const [newUser] = await db
-            .insert(users)
-            .values({
-              email: workosUser.email,
-              name: workosUser.firstName
-                ? `${workosUser.firstName} ${workosUser.lastName || ''}`.trim()
-                : workosUser.email,
-              passwordHash: await bcrypt.hash(randomBytes(32).toString('hex'), 12),
-              role: 'operator',
-              mustChangePassword: false,
-              mustSetupMfa: false,
-            })
-            .returning();
-          user = newUser;
-        }
-
-        createSession(reply, user.id, user.role as 'admin' | 'operator');
-        return reply.redirect('/');
-      } catch (err: any) {
-        return reply.code(401).send({ error: 'WorkOS auth failed: ' + err.message });
-      }
     },
   );
 

@@ -2,7 +2,6 @@ import { db } from '../db/index.js';
 import { contacts, campaigns, callLogs, recordings, recordingProfiles, settings } from '../db/schema.js';
 import { eq, and, or, lt, isNull, sql, inArray, asc } from 'drizzle-orm';
 import { fireWebhook, buildCallWebhookData } from '../integrations/webhooks.js';
-import { logCallToHubspot } from '../integrations/hubspot.js';
 import {
   getTeamSession,
   updateTeamSession,
@@ -403,17 +402,7 @@ export const dialerEngine = {
         (campaign?.enableTranscription && !campaign?.transcriptionMode);
 
       if (wantsRealtime) {
-        if (campaign?.sttProvider && campaign?.sttApiKey) {
-          // BYO STT — stream audio to external provider via WebSocket relay
-          const streamUrl = `wss://${config.WEBHOOK_BASE_URL.replace(/^https?:\/\//, '')}/audio-stream`;
-          await provider.startStreaming(callControlId, streamUrl);
-        } else {
-          // Telnyx built-in transcription
-          await provider.startTranscription(callControlId, {
-            engine: (campaign?.transcriptionEngine as any) || 'telnyx',
-            tracks: 'both',
-          });
-        }
+        await provider.startTranscription(callControlId, { tracks: 'both' });
       }
     } catch {
       // Don't fail the bridge if recording/transcription fails
@@ -669,8 +658,6 @@ export const dialerEngine = {
           console.error('[engine] fireWebhook failed:', err?.message ?? err),
         );
       }
-      // Sync to HubSpot if configured
-      logCallToHubspot(callLog.id).catch(() => {});
     }
 
     // Auto-advance if running

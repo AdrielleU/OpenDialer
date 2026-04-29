@@ -407,16 +407,6 @@ export const telnyxWebhookRoutes: FastifyPluginAsync = async (fastify) => {
               // Call may have already ended
             }
             await dialerEngine.handleCallEnd(call_control_id, 'voicemail');
-          } else if (playbackContext === 'failover') {
-            // Operator-disconnect failover finished — hang up the contact leg
-            // and log as connected (they did talk to a human, briefly).
-            try {
-              const provider = await getProvider();
-              await provider.hangup(call_control_id);
-            } catch {
-              // Already gone
-            }
-            await dialerEngine.handleCallEnd(call_control_id, 'connected');
           } else if (playbackContext === 'opener') {
             // Opener finished — if not yet bridged, update state
             const call = getInFlightCall(call_control_id);

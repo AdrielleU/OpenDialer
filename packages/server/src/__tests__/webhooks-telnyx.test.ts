@@ -38,8 +38,6 @@ vi.mock('../providers/index.js', async () => {
       stopRecording: vi.fn(),
       startTranscription: vi.fn(),
       stopTranscription: vi.fn(),
-      startStreaming: vi.fn(),
-      stopStreaming: vi.fn(),
       sendDTMF: vi.fn(),
       speak: vi.fn(),
       mute: vi.fn(),

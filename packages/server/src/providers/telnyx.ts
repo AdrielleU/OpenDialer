@@ -65,33 +65,15 @@ export class TelnyxProvider implements TelephonyProvider {
   }
 
   async startTranscription(callControlId: string, options: TranscriptionOptions = {}): Promise<void> {
-    const engineMap: Record<string, string> = {
-      telnyx: 'B',
-      google: 'A',
-      deepgram: 'Deepgram',
-      azure: 'Azure',
-    };
-
     await this.client.calls.actions.transcriptionStart(callControlId, {
       language: options.language || 'en',
-      transcription_engine: engineMap[options.engine || 'telnyx'] || 'B',
+      transcription_engine: 'B',
       transcription_tracks: options.tracks || 'both',
     });
   }
 
   async stopTranscription(callControlId: string): Promise<void> {
     await this.client.calls.actions.transcriptionStop(callControlId);
-  }
-
-  async startStreaming(callControlId: string, streamUrl: string, track = 'both_tracks'): Promise<void> {
-    await this.client.calls.actions.streamingStart(callControlId, {
-      stream_url: streamUrl,
-      stream_track: track,
-    });
-  }
-
-  async stopStreaming(callControlId: string): Promise<void> {
-    await this.client.calls.actions.streamingStop(callControlId);
   }
 
   async mute(callControlId: string): Promise<void> {

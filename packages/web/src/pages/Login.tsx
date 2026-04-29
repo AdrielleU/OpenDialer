@@ -20,7 +20,6 @@ export default function Login({ onAuthenticated }: Props) {
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
   const [showPassword, setShowPassword] = useState(false);
-  const [hasWorkos, setHasWorkos] = useState(false);
 
   useEffect(() => {
     auth.status().then((res) => {
@@ -34,7 +33,6 @@ export default function Login({ onAuthenticated }: Props) {
           onAuthenticated();
         }
       } else {
-        setHasWorkos(res.hasWorkos);
         setStage('login');
       }
     }).catch(() => setStage('login'));
@@ -191,24 +189,6 @@ export default function Login({ onAuthenticated }: Props) {
               >
                 {loading ? 'Signing in...' : 'Sign In'}
               </button>
-              {hasWorkos && (
-                <>
-                  <div className="relative my-3">
-                    <div className="absolute inset-0 flex items-center">
-                      <div className="w-full border-t border-gray-800" />
-                    </div>
-                    <div className="relative flex justify-center text-xs">
-                      <span className="bg-gray-900 px-2 text-gray-500">or</span>
-                    </div>
-                  </div>
-                  <a
-                    href="/api/auth/workos"
-                    className="block w-full py-2.5 bg-gray-800 hover:bg-gray-700 rounded-lg text-sm font-medium text-center transition-colors"
-                  >
-                    Sign in with SSO
-                  </a>
-                </>
-              )}
             </form>
           )}
 

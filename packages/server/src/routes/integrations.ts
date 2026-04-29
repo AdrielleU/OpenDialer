@@ -1,44 +1,10 @@
 import type { FastifyPluginAsync } from 'fastify';
-import { testHubspotConnection, importHubspotContacts, logCallToHubspot } from '../integrations/hubspot.js';
 import { fireWebhook } from '../integrations/webhooks.js';
 import { db } from '../db/index.js';
 import { settings } from '../db/schema.js';
 import { eq } from 'drizzle-orm';
 
 export const integrationRoutes: FastifyPluginAsync = async (fastify) => {
-  // --- HubSpot ---
-
-  fastify.get('/hubspot/test', async () => {
-    return testHubspotConnection();
-  });
-
-  fastify.post<{ Body: { campaignId: number; limit?: number } }>(
-    '/hubspot/import',
-    async (request, reply) => {
-      const { campaignId, limit } = request.body as { campaignId: number; limit?: number };
-      if (!campaignId) return reply.code(400).send({ error: 'campaignId required.' });
-
-      try {
-        const result = await importHubspotContacts(campaignId, { limit });
-        return result;
-      } catch (err: any) {
-        return reply.code(400).send({ error: err.message });
-      }
-    },
-  );
-
-  fastify.post<{ Body: { callLogId: number } }>('/hubspot/log-call', async (request, reply) => {
-    const { callLogId } = request.body as { callLogId: number };
-    if (!callLogId) return reply.code(400).send({ error: 'callLogId required.' });
-
-    try {
-      await logCallToHubspot(callLogId);
-      return { message: 'Call logged to HubSpot.' };
-    } catch (err: any) {
-      return reply.code(400).send({ error: err.message });
-    }
-  });
-
   // --- Webhook Test ---
 
   fastify.post('/webhook/test', async (_request, reply) => {

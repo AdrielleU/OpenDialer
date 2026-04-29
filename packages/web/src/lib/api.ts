@@ -132,7 +132,7 @@ export const api = {
     upload: async (
       file: File,
       name: string,
-      type: 'opener' | 'voicemail' | 'failover',
+      type: 'opener' | 'voicemail',
     ): Promise<Recording> => {
       const formData = new FormData();
       formData.append('file', file);
@@ -257,11 +257,6 @@ export const api = {
       request<{ status: string; recordingId: number }>('/dialer/drop-voicemail', {
         method: 'POST',
         body: JSON.stringify({ callControlId, recordingId }),
-      }),
-    speak: (callControlId: string, text: string, voice?: string) =>
-      request('/dialer/speak', {
-        method: 'POST',
-        body: JSON.stringify({ callControlId, text, voice }),
       }),
     webrtcCredentials: () =>
       request<{ login: string; password: string }>('/dialer/webrtc-credentials'),

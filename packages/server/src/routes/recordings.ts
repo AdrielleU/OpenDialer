@@ -11,7 +11,7 @@ const uploadsDir = resolve('uploads');
 
 export const recordingRoutes: FastifyPluginAsync = async (fastify) => {
   // List recordings
-  fastify.get<{ Querystring: { type?: 'opener' | 'voicemail' | 'failover' } }>(
+  fastify.get<{ Querystring: { type?: 'opener' | 'voicemail' } }>(
     '/',
     async (request) => {
       const { type } = request.query;
@@ -30,10 +30,8 @@ export const recordingRoutes: FastifyPluginAsync = async (fastify) => {
     const name = (data.fields.name as any)?.value || data.filename;
     const type = (data.fields.type as any)?.value;
 
-    if (!type || !['opener', 'voicemail', 'failover'].includes(type)) {
-      return reply
-        .code(400)
-        .send({ error: 'Type must be "opener", "voicemail", or "failover"' });
+    if (!type || !['opener', 'voicemail'].includes(type)) {
+      return reply.code(400).send({ error: 'Type must be "opener" or "voicemail"' });
     }
 
     const ext = data.filename.split('.').pop() || 'wav';
@@ -46,7 +44,7 @@ export const recordingRoutes: FastifyPluginAsync = async (fastify) => {
       .insert(recordings)
       .values({
         name,
-        type: type as 'opener' | 'voicemail' | 'failover',
+        type: type as 'opener' | 'voicemail',
         filePath: `/uploads/${fileName}`,
       })
       .returning();

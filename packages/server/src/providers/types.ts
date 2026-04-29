@@ -14,7 +14,6 @@ export interface DialResult {
 
 export interface TranscriptionOptions {
   language?: string;
-  engine?: 'telnyx' | 'google' | 'deepgram' | 'azure';
   tracks?: 'inbound' | 'outbound' | 'both';
 }
 
@@ -33,8 +32,6 @@ export interface TelephonyProvider {
   stopRecording(callControlId: string): Promise<void>;
   startTranscription(callControlId: string, options?: TranscriptionOptions): Promise<void>;
   stopTranscription(callControlId: string): Promise<void>;
-  startStreaming(callControlId: string, streamUrl: string, track?: string): Promise<void>;
-  stopStreaming(callControlId: string): Promise<void>;
   sendDTMF(callControlId: string, digits: string): Promise<void>;
   speak(callControlId: string, text: string, voice?: string): Promise<void>;
   mute(callControlId: string): Promise<void>;
