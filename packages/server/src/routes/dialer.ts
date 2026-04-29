@@ -13,7 +13,7 @@ import {
 import { handleOperatorDisconnect } from '../dialer/disconnect.js';
 import { broadcast } from '../ws/index.js';
 import { db } from '../db/index.js';
-import { users, recordings } from '../db/schema.js';
+import { users, recordings, campaigns } from '../db/schema.js';
 import { eq } from 'drizzle-orm';
 import { getProvider } from '../providers/index.js';
 import { config } from '../config.js';
@@ -28,6 +28,13 @@ const SpeakSchema = z.object({
   callControlId: z.string().min(1),
   text: z.string().min(1).max(1000),
   voice: z.string().max(50).optional(),
+});
+
+const DropVoicemailSchema = z.object({
+  callControlId: z.string().min(1),
+  // Optional override — drop a non-default recording for this one call
+  // (e.g. a follow-up message vs. the campaign's first-touch voicemail).
+  recordingId: z.number().int().positive().optional(),
 });
 
 // Returns true if the request is from an admin; otherwise sends 403 and returns false.
@@ -343,6 +350,86 @@ export const dialerRoutes: FastifyPluginAsync = async (fastify) => {
       return { status: 'talking' };
     } catch (err: any) {
       return reply.code(400).send({ error: err.message });
+    }
+  });
+
+  // Manually drop the campaign's voicemail recording onto a live call leg —
+  // operator-initiated when AMD missed the answering machine, or admin-initiated
+  // on a ringing line they'd rather not wait on. The webhook's
+  // call.playback.ended handler hangs the call up and logs disposition=voicemail
+  // when it sees playbackType=voicemail in client_state, so the operator is
+  // freed automatically and stat counters update normally.
+  fastify.post('/drop-voicemail', async (request, reply) => {
+    const userId = (request as any).userId as number;
+    const body = validate(DropVoicemailSchema, request.body, reply);
+    if (!body) return;
+    const { callControlId, recordingId } = body;
+
+    const call = getInFlightCall(callControlId);
+    if (!call) return reply.code(404).send({ error: 'Call not found.' });
+
+    // Authorize: assigned operator OR admin. Other operators cannot drop on
+    // a call they aren't bridged to — that would race with whoever owns it.
+    const isAdmin = (request as any).userRole === 'admin';
+    if (!isAdmin && call.assignedOperatorId !== userId) {
+      return reply
+        .code(403)
+        .send({ error: 'Only the assigned operator or an admin can drop voicemail on this call.' });
+    }
+
+    const session = getTeamSession();
+    const campaign = await db
+      .select()
+      .from(campaigns)
+      .where(eq(campaigns.id, session.campaignId))
+      .get();
+
+    const targetRecordingId = recordingId ?? campaign?.voicemailRecordingId;
+    if (!targetRecordingId) {
+      return reply.code(400).send({
+        error: 'No voicemail recording configured. Set one on the campaign or pass recordingId.',
+      });
+    }
+
+    const recording = await db
+      .select()
+      .from(recordings)
+      .where(eq(recordings.id, targetRecordingId))
+      .get();
+    if (!recording) return reply.code(404).send({ error: 'Recording not found.' });
+
+    try {
+      const provider = await getProvider();
+
+      // Stop any audio currently playing (e.g. opener) — otherwise Telnyx may
+      // queue the voicemail playback behind it.
+      try {
+        await provider.stopPlayback(callControlId);
+      } catch {
+        // Nothing playing — ignore
+      }
+
+      const audioUrl = `${config.WEBHOOK_BASE_URL}${recording.filePath}`;
+      const clientState = JSON.stringify({
+        campaignId: session.campaignId,
+        contactId: call.contactId,
+        playbackType: 'voicemail',
+      });
+      await provider.playAudio(callControlId, audioUrl, clientState);
+
+      broadcast({
+        type: 'call_status_changed',
+        data: {
+          callState: 'voicemail_dropping',
+          contactId: call.contactId,
+          callControlId,
+          message: 'Voicemail dropped manually — call will hang up after playback.',
+        },
+      });
+
+      return { status: 'dropping', recordingId: targetRecordingId };
+    } catch (err: any) {
+      return reply.code(500).send({ error: err.message });
     }
   });
 

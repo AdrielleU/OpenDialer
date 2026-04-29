@@ -16,6 +16,9 @@ export default function Campaigns() {
     voicemailRecordingId: '',
     failoverRecordingId: '',
     dropIfNoOperator: true,
+    maxAttempts: 1,
+    retryAfterMinutes: 60,
+    prioritizeVoicemails: true,
     ivrSequence: '',
     ivrGreetingType: 'none' as string,
     ivrGreetingTemplate: '',
@@ -35,6 +38,9 @@ export default function Campaigns() {
     voicemailRecordingId: '',
     failoverRecordingId: '',
     dropIfNoOperator: true,
+    maxAttempts: 1,
+    retryAfterMinutes: 60,
+    prioritizeVoicemails: true,
     ivrSequence: '',
     ivrGreetingType: 'none' as string,
     ivrGreetingTemplate: '',
@@ -49,8 +55,11 @@ export default function Campaigns() {
       voicemailRecordingId: form.voicemailRecordingId ? Number(form.voicemailRecordingId) : undefined,
       failoverRecordingId: form.failoverRecordingId ? Number(form.failoverRecordingId) : undefined,
       dropIfNoOperator: form.dropIfNoOperator,
+      maxAttempts: form.maxAttempts,
+      retryAfterMinutes: form.retryAfterMinutes,
+      prioritizeVoicemails: form.prioritizeVoicemails,
       ivrSequence: form.ivrSequence || null,
-      ivrGreetingType: form.ivrGreetingType || 'none',
+      ivrGreetingType: (form.ivrGreetingType || 'none') as 'none' | 'recording' | 'tts',
       ivrGreetingTemplate: form.ivrGreetingTemplate || null,
     };
 
@@ -75,6 +84,9 @@ export default function Campaigns() {
       voicemailRecordingId: c.voicemailRecordingId?.toString() || '',
       failoverRecordingId: c.failoverRecordingId?.toString() || '',
       dropIfNoOperator: (c as any).dropIfNoOperator ?? true,
+      maxAttempts: (c as any).maxAttempts ?? 1,
+      retryAfterMinutes: (c as any).retryAfterMinutes ?? 60,
+      prioritizeVoicemails: (c as any).prioritizeVoicemails ?? true,
       ivrSequence: (c as any).ivrSequence || '',
       ivrGreetingType: (c as any).ivrGreetingType || 'none',
       ivrGreetingTemplate: (c as any).ivrGreetingTemplate || '',
@@ -126,6 +138,14 @@ export default function Campaigns() {
                 {(c as any).dropIfNoOperator && (
                   <span className="px-2 py-0.5 rounded text-xs font-medium bg-orange-900 text-orange-300">
                     Drop if busy
+                  </span>
+                )}
+                {((c as any).maxAttempts ?? 1) > 1 && (
+                  <span
+                    className="px-2 py-0.5 rounded text-xs font-medium bg-purple-900 text-purple-300"
+                    title={`Up to ${(c as any).maxAttempts} attempts, ${(c as any).retryAfterMinutes ?? 60}m apart`}
+                  >
+                    Retry x{(c as any).maxAttempts}
                   </span>
                 )}
               </div>
@@ -238,6 +258,59 @@ export default function Campaigns() {
                 <div>
                   <div className="text-sm font-medium">Drop if no operator available</div>
                   <div className="text-xs text-gray-500">Hang up and retry later instead of making the contact wait</div>
+                </div>
+              </label>
+
+              <div className="grid grid-cols-2 gap-3 mb-3">
+                <div>
+                  <label className="block text-xs text-gray-500 mb-1">Max attempts per contact</label>
+                  <input
+                    type="number"
+                    min={1}
+                    max={10}
+                    value={form.maxAttempts}
+                    onChange={(e) => setForm({ ...form, maxAttempts: Number(e.target.value) || 1 })}
+                    className="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm"
+                  />
+                  <p className="text-[11px] text-gray-600 mt-1">
+                    1 = call once. Higher values let voicemail-receiving contacts be re-dialed.
+                  </p>
+                </div>
+                <div>
+                  <label className="block text-xs text-gray-500 mb-1">Retry after (minutes)</label>
+                  <input
+                    type="number"
+                    min={0}
+                    max={10080}
+                    value={form.retryAfterMinutes}
+                    onChange={(e) =>
+                      setForm({ ...form, retryAfterMinutes: Number(e.target.value) || 0 })
+                    }
+                    className="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm"
+                    disabled={form.maxAttempts <= 1}
+                  />
+                  <p className="text-[11px] text-gray-600 mt-1">
+                    Minimum gap between attempts on the same contact.
+                  </p>
+                </div>
+              </div>
+
+              <label className="flex items-center gap-3 cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={form.prioritizeVoicemails}
+                  onChange={(e) =>
+                    setForm({ ...form, prioritizeVoicemails: e.target.checked })
+                  }
+                  disabled={form.maxAttempts <= 1}
+                  className="accent-emerald-500 w-4 h-4 disabled:opacity-40"
+                />
+                <div>
+                  <div className="text-sm font-medium">Prioritize voicemail-receiving contacts</div>
+                  <div className="text-xs text-gray-500">
+                    Re-dial contacts that already heard your voicemail before fresh contacts —
+                    second-touch attempts tend to convert higher.
+                  </div>
                 </div>
               </label>
             </div>

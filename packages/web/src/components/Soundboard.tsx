@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { Play, Volume2, MessageSquareText } from 'lucide-react';
+import { Play, Volume2, MessageSquareText, Voicemail } from 'lucide-react';
 import { api } from '../lib/api';
 import type { Recording } from '../types';
 
@@ -63,8 +63,68 @@ export default function Soundboard({ callControlId, contactName }: Props) {
     }
   };
 
+  const handleDropVoicemail = async (recordingId?: number) => {
+    if (!confirm('Drop voicemail and end this call?')) return;
+    setError(null);
+    setBusy('drop-vm');
+    try {
+      await api.dialer.dropVoicemail(callControlId, recordingId);
+    } catch (err: any) {
+      setError(`Could not drop voicemail: ${err.message}`);
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  const voicemailRecordings = recordings.filter((r) => r.type === 'voicemail');
+
   return (
     <div className="w-full max-w-lg mx-auto mt-4 space-y-4">
+      {/* Drop voicemail — ends the call after the recording finishes */}
+      <div className="bg-yellow-500/5 border border-yellow-500/30 rounded-xl p-4">
+        <div className="flex items-center gap-2 mb-2 text-xs font-semibold text-yellow-300 uppercase tracking-wider">
+          <Voicemail size={14} />
+          Drop Voicemail
+        </div>
+        <p className="text-xs text-gray-500 mb-3">
+          Plays a voicemail message on this call and hangs up automatically when it finishes.
+          You'll be freed for the next call instantly — no need to wait through the recording.
+        </p>
+        {voicemailRecordings.length === 0 ? (
+          <button
+            onClick={() => handleDropVoicemail()}
+            disabled={busy === 'drop-vm'}
+            className="w-full px-4 py-2 bg-yellow-600 hover:bg-yellow-500 disabled:bg-gray-700 disabled:text-gray-500 rounded-lg text-sm font-bold transition-colors flex items-center justify-center gap-2"
+          >
+            <Voicemail size={14} />
+            {busy === 'drop-vm' ? 'Dropping...' : 'Drop Campaign Voicemail'}
+          </button>
+        ) : (
+          <div className="grid grid-cols-1 gap-2">
+            <button
+              onClick={() => handleDropVoicemail()}
+              disabled={busy === 'drop-vm'}
+              className="px-3 py-2 bg-yellow-600 hover:bg-yellow-500 disabled:bg-gray-700 disabled:text-gray-500 rounded-lg text-sm font-bold transition-colors flex items-center justify-center gap-2"
+            >
+              <Voicemail size={14} />
+              {busy === 'drop-vm' ? 'Dropping...' : 'Drop Campaign Voicemail'}
+            </button>
+            {voicemailRecordings.map((rec) => (
+              <button
+                key={rec.id}
+                onClick={() => handleDropVoicemail(rec.id)}
+                disabled={busy === 'drop-vm'}
+                className="px-3 py-1.5 bg-gray-900 hover:bg-gray-700 disabled:opacity-50 border border-yellow-500/30 rounded-lg text-xs text-left text-gray-200 transition-colors flex items-center gap-2"
+                title={`Drop "${rec.name}" instead of campaign default`}
+              >
+                <Voicemail size={12} className="shrink-0 text-yellow-400" />
+                <span className="truncate">Use: {rec.name}</span>
+              </button>
+            ))}
+          </div>
+        )}
+      </div>
+
       {/* TTS message box */}
       <div className="bg-gray-800/60 border border-gray-700 rounded-xl p-4">
         <div className="flex items-center gap-2 mb-2 text-xs font-semibold text-gray-400 uppercase tracking-wider">

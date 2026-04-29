@@ -1,6 +1,6 @@
 import { db } from '../db/index.js';
 import { contacts, campaigns, callLogs, recordings, recordingProfiles, settings } from '../db/schema.js';
-import { eq, and } from 'drizzle-orm';
+import { eq, and, or, lt, isNull, sql, inArray, asc } from 'drizzle-orm';
 import { fireWebhook, buildCallWebhookData } from '../integrations/webhooks.js';
 import { logCallToHubspot } from '../integrations/hubspot.js';
 import {
@@ -27,6 +27,50 @@ async function getSetting(key: string): Promise<string | undefined> {
   return row?.value;
 }
 
+/**
+ * Pick contacts that are eligible to be dialed for a campaign, applying:
+ *  - status filter: 'pending' always; 'voicemail' when maxAttempts > 1
+ *  - attempts cap: callCount < maxAttempts
+ *  - retry window: lastCalledAt is NULL or older than retryAfterMinutes
+ *  - ordering: prioritizeVoicemails dials voicemail-receivers first
+ *    (then fewest-attempts, then oldest lastCalledAt)
+ *
+ * Returns ids only — the caller pushes them onto the in-memory queue.
+ */
+async function selectEligibleContacts(campaign: typeof campaigns.$inferSelect) {
+  const allowedStatuses: Array<'pending' | 'voicemail'> =
+    campaign.maxAttempts > 1 ? ['pending', 'voicemail'] : ['pending'];
+
+  const retryCutoff = new Date(Date.now() - campaign.retryAfterMinutes * 60_000).toISOString();
+
+  // Voicemail-status contacts must wait for the retry window before being
+  // re-dialed. Pending contacts are eligible immediately. SQLite text-as-ISO
+  // dates compare lexicographically, which matches chronological order.
+  return db
+    .select({ id: contacts.id })
+    .from(contacts)
+    .where(
+      and(
+        eq(contacts.campaignId, campaign.id),
+        inArray(contacts.status, allowedStatuses),
+        lt(contacts.callCount, campaign.maxAttempts),
+        or(
+          eq(contacts.status, 'pending'),
+          isNull(contacts.lastCalledAt),
+          lt(contacts.lastCalledAt, retryCutoff),
+        ),
+      ),
+    )
+    .orderBy(
+      // Prioritize voicemail-receivers (1 before 0 in DESC) when the flag is on
+      campaign.prioritizeVoicemails
+        ? sql`CASE WHEN ${contacts.status} = 'voicemail' THEN 0 ELSE 1 END`
+        : asc(contacts.id),
+      asc(contacts.callCount),
+      asc(contacts.lastCalledAt),
+    );
+}
+
 export const dialerEngine = {
   async startSession(campaignId: number) {
     const session = getTeamSession();
@@ -37,16 +81,13 @@ export const dialerEngine = {
     const campaign = await db.select().from(campaigns).where(eq(campaigns.id, campaignId)).get();
     if (!campaign) throw new Error('Campaign not found');
 
-    const pendingContacts = await db
-      .select()
-      .from(contacts)
-      .where(and(eq(contacts.campaignId, campaignId), eq(contacts.status, 'pending')));
+    const eligibleContacts = await selectEligibleContacts(campaign);
 
-    if (pendingContacts.length === 0) {
+    if (eligibleContacts.length === 0) {
       throw new Error('No pending contacts in this campaign');
     }
 
-    const queue = pendingContacts.map((c) => c.id);
+    const queue = eligibleContacts.map((c) => c.id);
 
     updateTeamSession({
       campaignId,
@@ -72,6 +113,28 @@ export const dialerEngine = {
   async dialNextBatch(): Promise<void> {
     const session = getTeamSession();
     if (session.status !== 'running') return;
+
+    // Top up the queue from the DB if we've drained it but there are still
+    // eligible contacts (e.g. voicemail-status contacts whose retry window
+    // just opened). Skip ids already in flight to avoid double-dialing.
+    if (session.queue.length === 0 && session.campaignId) {
+      const campaign = await db
+        .select()
+        .from(campaigns)
+        .where(eq(campaigns.id, session.campaignId))
+        .get();
+      if (campaign) {
+        const inFlightContactIds = new Set(
+          Array.from(session.inFlightCalls.values()).map((c) => c.contactId),
+        );
+        const refill = await selectEligibleContacts(campaign);
+        const refillIds = refill.map((r) => r.id).filter((id) => !inFlightContactIds.has(id));
+        if (refillIds.length > 0) {
+          session.queue.push(...refillIds);
+        }
+      }
+    }
+
     if (session.queue.length === 0 && session.inFlightCalls.size === 0) {
       // Campaign complete
       updateTeamSession({ status: 'stopped' });

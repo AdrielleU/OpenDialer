@@ -49,6 +49,16 @@ export const campaigns = sqliteTable('campaigns', {
   sttProvider: text('stt_provider'),
   sttApiKey: text('stt_api_key'),
   dropIfNoOperator: integer('drop_if_no_operator', { mode: 'boolean' }).notNull().default(true),
+  // Retry/priority knobs. maxAttempts=1 means "call once" (current behavior);
+  // raise to allow voicemail-receiving contacts to be re-dialed.
+  // retryAfterMinutes is the minimum gap between attempts on the same contact.
+  // prioritizeVoicemails dials contacts that have already heard a voicemail
+  // before fresh contacts — second/third touches tend to convert higher.
+  maxAttempts: integer('max_attempts').notNull().default(1),
+  retryAfterMinutes: integer('retry_after_minutes').notNull().default(60),
+  prioritizeVoicemails: integer('prioritize_voicemails', { mode: 'boolean' })
+    .notNull()
+    .default(true),
   ivrSequence: text('ivr_sequence'),
   ivrGreetingType: text('ivr_greeting_type', { enum: ['none', 'recording', 'tts'] }).default('none'),
   ivrGreetingTemplate: text('ivr_greeting_template'),

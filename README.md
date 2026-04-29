@@ -96,10 +96,54 @@ What it is **not** designed for: cold-calling consumers, dropping voicemails to 
 
 ---
 
+## ⏱️ Time Saved — How the Math Works
+
+Every feature below is built to remove a specific manual step from a calling shift. Here's where the hours actually come from, with the assumptions stated so you can plug in your own numbers.
+
+### Per-call savings
+
+| Manual workflow step | Time per occurrence | OpenDialer behavior |
+|---|---|---|
+| Wait through ring + voicemail greeting + leave message | **~25–35 seconds** | AMD + auto voicemail drop runs on the Telnyx side; the operator is never bridged for voicemails |
+| Type / dial the next number | ~5–8 seconds | Already loaded — next call starts the moment the operator goes available |
+| Wait for ringing on the next contact (no answer) | ~20 seconds × *N* parallel lines | 3× lines dialed in parallel; only humans reach the operator |
+| Re-call yesterday's voicemail-receivers manually | ~15 seconds + context-switching per contact | `maxAttempts > 1` re-queues them automatically with a configurable retry window |
+
+### Concrete example — 6-hour shift, 1 operator
+
+Industry baseline for B2B cold outbound: **~70–85% of dials hit voicemail or no-answer**. We'll use 75%.
+
+| Manual dialer | OpenDialer |
+|---|---|
+| ~80 dials/hour, ~20 connects/shift | ~180–240 dials/hour, ~50–70 connects/shift |
+| Operator listens through ~360 voicemail beeps | Operator hears **0** voicemail beeps |
+| ~3.0–3.5 hours of dead air per shift | **~0** dead air |
+| Voicemail-receivers manually re-listed for tomorrow | Auto-retried at the campaign's `retryAfterMinutes` cadence |
+
+**Bottom line:** roughly **3 hours per operator per shift** of pure waiting time eliminated, plus a 2–3× lift in dials-per-hour from parallel lines. For a 5-operator team, that's ~15 operator-hours/day reclaimed for actual conversations.
+
+### What enables this
+
+1. **Voicemail drop runs server-side, not on the operator's leg.** When AMD detects a machine, the contact's call leg plays the campaign voicemail recording via the Telnyx Call Control API and hangs up automatically. The operator's WebRTC line stays free the whole time. See `packages/server/src/webhooks/telnyx.ts`.
+2. **Manual voicemail drop for live calls.** If AMD missed the machine, or you reach a voicemail mid-conversation, hit **Drop Voicemail** in the operator UI. The recording plays on the contact's leg, the call hangs up after, you go straight to wrap-up. No more waiting for the beep yourself.
+3. **Voicemail-priority retry queue.** Set `maxAttempts > 1` on a campaign. Contacts that received a voicemail are eligible to be re-dialed once the retry window has passed, and (with `prioritizeVoicemails` on) they're dialed *before* fresh contacts — second/third touches typically convert higher than first.
+
+> The "drop voicemail and start the next call simultaneously" pattern is the default behavior — voicemail playback runs autonomously on Telnyx infrastructure while the dialer keeps the operator's queue full.
+
+### Can I use the rest of the UI while I'm in a call?
+
+Yes. The operator UI is a single-page React app that talks to Fastify over HTTP/SSE for state and to Telnyx over WebRTC for the audio. You can edit contact notes, scroll the live transcript, browse the campaign list, kick off a soundboard clip, type out a TTS message, or drop the voicemail — all without dropping the call. The audio leg lives in the browser's WebRTC stack and is not affected by route changes elsewhere in the app.
+
+### Is this a SIP client?
+
+Yes — under the hood. Each operator is provisioned a per-user **Telnyx Telephony Credential** (SIP username + password, stored on the `users` row). The browser uses the official `@telnyx/webrtc` SDK, which is a **WebRTC-over-SIP** client that registers against Telnyx's edge — so technically it's a softphone, but it runs entirely in the browser with no desktop install. The server bridges Telnyx's PSTN-side call leg into the operator's WebRTC leg via the Telnyx Call Control bridge API. Audio quality, codecs, and routing are all standard Telnyx WebRTC.
+
+---
+
 ## ✨ Features
 
 ### 📋 Campaign Management
-Create calling campaigns with contact lists, opener recordings, and voicemail drops. Set your caller ID, assign recordings, and track campaign progress in real time.
+Create calling campaigns with contact lists, opener recordings, and voicemail drops. Set your caller ID, assign recordings, and track campaign progress in real time. **Retry knobs:** `maxAttempts`, `retryAfterMinutes`, and `prioritizeVoicemails` control how voicemail-receiving contacts get re-dialed.
 
 ### 👥 Contact Management
 - **CSV import** — upload contacts with name, phone, company, email, notes
@@ -112,7 +156,9 @@ Upload MP3/WAV files for opener messages, voicemail drops, and failover (operato
 ### 📞 Power Dialer (Team Mode)
 The main screen — your team sits with headsets on:
 - **Parallel dialing** — system dials 3x the number of available operators simultaneously
-- **Voicemails are automatic** — AMD detects, waits for beep, drops recording, hangs up, dials more
+- **Voicemail drop runs in parallel** — AMD detects machine, plays the campaign voicemail recording on the contact's leg via Telnyx, hangs up. The operator is never bridged in for voicemails, so the *next* dial is already happening while the previous voicemail plays out
+- **Manual "Drop Voicemail" button** — for the cases AMD misses (or when you reach a voicemail mid-conversation): one click plays the campaign voicemail on the contact's leg and hangs up, freeing you immediately for the next call
+- **Voicemail-priority retry queue** — campaigns can set `maxAttempts > 1` to re-dial voicemail-receivers after `retryAfterMinutes`; with `prioritizeVoicemails` on, those second-touch attempts are dialed before fresh contacts
 - **Auto-routing** — when a human answers, the call is automatically routed to the first available operator
 - **Auto-bridge** — operator's WebRTC audio is bridged into the live call automatically (no manual "Jump In" needed in team mode)
 - **Waiting queue** — if all operators are busy, human-answered calls hold until someone is free
@@ -240,24 +286,32 @@ No polling. No WebSocket complexity. The browser uses the native `EventSource` A
 
 ## 🚀 Quick Start
 
+> **TL;DR — 3 commands to get running:**
+> ```bash
+> git clone https://github.com/AdrielleU/OpenDialer.git && cd OpenDialer
+> cp .env.example .env   # then edit .env with your Telnyx credentials
+> docker compose up --build
+> ```
+> Open **http://localhost:3000**, log in with the email/password from your `.env`, and follow the [User Guide](#-user-guide--your-first-calling-session) below.
+
 ### Prerequisites
 
 - [Docker Desktop](https://docker.com/products/docker-desktop) (Windows, Mac, or Linux)
-- A [Telnyx](https://telnyx.com) account with:
-  - API Key (starts with `KEY_`)
-  - A [SIP Connection](https://portal.telnyx.com/#/app/connections) with WebRTC enabled
-  - A purchased phone number
+- A [Telnyx](https://telnyx.com) account — sign up, then set up these three things in the [Mission Control Portal](https://portal.telnyx.com):
+  1. **API Key** — go to *API Keys* in the left sidebar, create one (starts with `KEY_`)
+  2. **SIP Connection** — go to *Voice > SIP Connections*, create a **Credentials** connection, and **enable WebRTC** in its settings (required for operator audio)
+  3. **Phone Number** — go to *Numbers > Search & Buy*, purchase a number, and assign it to your SIP Connection
 
 ### 1. Download & Configure
 
 **Option A — Git clone (recommended):**
 ```bash
-git clone https://github.com/yourusername/OpenDialer.git
+git clone https://github.com/AdrielleU/OpenDialer.git
 cd OpenDialer
 ```
 
 **Option B — Download ZIP (no Git required):**
-1. Go to the [GitHub repo](https://github.com/yourusername/OpenDialer)
+1. Go to the [GitHub repo](https://github.com/AdrielleU/OpenDialer)
 2. Click the green **Code** button → **Download ZIP**
 3. Extract the ZIP to a folder (e.g., `C:\Users\you\OpenDialer` on Windows or `~/OpenDialer` on Mac)
 
@@ -883,7 +937,7 @@ Contributions are welcome! This is an AGPL-3.0 project — if you offer OpenDial
 ### Development Setup
 
 ```bash
-git clone https://github.com/yourusername/OpenDialer.git
+git clone https://github.com/AdrielleU/OpenDialer.git
 cd OpenDialer
 pnpm install
 pnpm dev
@@ -959,7 +1013,7 @@ If you do not accept these terms, do not use this software.
 
 Created by **AdrielleU** | Sponsored by **AIIVARS LLC**
 
-See all [OpenDialer Contributors](https://github.com/yourusername/OpenDialer/graphs/contributors).
+See all [OpenDialer Contributors](https://github.com/AdrielleU/OpenDialer/graphs/contributors).
 
 ---
 
@@ -970,6 +1024,6 @@ See all [OpenDialer Contributors](https://github.com/yourusername/OpenDialer/gra
 
 <br />
 
-[Report Bug](https://github.com/yourusername/OpenDialer/issues) · [Request Feature](https://github.com/yourusername/OpenDialer/issues) · [Discussions](https://github.com/yourusername/OpenDialer/discussions)
+[Report Bug](https://github.com/AdrielleU/OpenDialer/issues) · [Request Feature](https://github.com/AdrielleU/OpenDialer/issues) · [Discussions](https://github.com/AdrielleU/OpenDialer/discussions)
 
 </div>

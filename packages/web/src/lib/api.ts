@@ -253,6 +253,11 @@ export const api = {
         method: 'POST',
         body: JSON.stringify({ callControlId, recordingId }),
       }),
+    dropVoicemail: (callControlId: string, recordingId?: number) =>
+      request<{ status: string; recordingId: number }>('/dialer/drop-voicemail', {
+        method: 'POST',
+        body: JSON.stringify({ callControlId, recordingId }),
+      }),
     speak: (callControlId: string, text: string, voice?: string) =>
       request('/dialer/speak', {
         method: 'POST',

@@ -8,6 +8,13 @@ export interface Campaign {
   enableTranscription?: boolean;
   transcriptionEngine?: string;
   transcriptionMode?: 'off' | 'realtime' | 'post_call';
+  dropIfNoOperator?: boolean;
+  maxAttempts?: number;
+  retryAfterMinutes?: number;
+  prioritizeVoicemails?: boolean;
+  ivrSequence?: string | null;
+  ivrGreetingType?: 'none' | 'recording' | 'tts';
+  ivrGreetingTemplate?: string | null;
   status: 'draft' | 'active' | 'paused' | 'completed';
   createdAt: string;
   updatedAt: string;
